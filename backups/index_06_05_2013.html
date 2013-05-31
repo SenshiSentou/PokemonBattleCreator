@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html>
+	<head>
+	</head>
+	<body>
+		<style type="text/css">
+			#PokemonOptionsDiv {
+			    position:absolute;
+			    top: 10px;
+			    left: 435px;
+			    width: 80px;
+			    height:60px;
+			    <!--border: solid 1px;-->
+			}
+			
+			#BattleTextDiv {
+			    position:absolute;
+			    top: 200px;
+			    left: 10px;
+			    width: 250px;
+			    height:50px;
+			}
+			
+			.battleTextInput {
+				width: 250px;
+				resize: none;
+			}
+		
+		</style>
+		
+		
+		<div id="BattleTextDiv">
+			<textarea id="battleText" rows="2" class="battleTextInput" oninput="updateTextArea();"">Trainer X wants to battle!</textarea>
+		</div>
+		<div id="PokemonOptionsDiv">
+			<input type="radio" name="gender" value="Male" id="characteristic_male" onchange="updateCharacteristics()" checked> Male<br>
+			<input type="radio" name="gender" value="Female" id="characteristic_female" onchange="updateCharacteristics()"> Female<br>
+			<input type="checkbox" name="shiny" value="Shiny" id="characteristic_shiny" onchange="updateCharacteristics()"> Shiny
+		</div>
+		<canvas id="myCanvas" width="1200" height="600"></canvas> 
+		
+		<script>
+			if (typeof String.prototype.startsWith != 'function') {
+			  String.prototype.startsWith = function (str){
+			    return this.lastIndexOf(str, 0) == 0;
+			  };
+			}
+			
+			function Bounds(x, y, w, h, execute, update){
+				this.x = x;
+				this.y = y;
+				this.w = w;
+				this.h = h;
+				this.execute = execute;
+				if(update){
+					this.update = update;
+				}
+				else{
+					this.update = function(){}; //empty function; kinda ugly?
+				}
+				this.inBounds = function(x, y){
+					return x >= this.x && x <= this.x + this.w && y >= this.y && y <= this.y + this.h;
+				}
+			}
+			
+			function Button(name, img_src, x, y, hasActive, execute, update, activatedOnStart){
+				this.x = x;
+				this.y = y;
+				
+				if(hasActive){
+					var btn_enabled = new Image();
+					btn_enabled.src = img_src+"_active.png";
+				}
+				var btn_disabled = new Image();
+				btn_disabled.src = img_src+".png";
+				btn_disabled.onload = function(){
+					if(!activatedOnStart){
+						ctx.drawImage(btn_disabled, x, y);
+					}
+					bounds[name] = new Bounds(x, y, btn_disabled.width, btn_disabled.height, execute, update);
+				}
+				
+				this.activate = function(){
+					if(btn_enabled.complete){
+						ctx.drawImage(btn_enabled, x, y);
+					}
+					else{
+						btn_enabled.onload = function(){
+							ctx.drawImage(btn_enabled, x, y);
+						}
+					}
+				}
+				
+				this.deactivate = function(){
+					ctx.drawImage(btn_disabled, x, y);
+				}
+			}
+			
+			function Sprite(img, x, y, offsetY, num, gen){
+				this.img = img;
+				this.x = x;
+				this.y = y;
+				this.offsetY = offsetY;
+				this.num = num;
+				this.gen = gen;
+			}
+			
+			var updateUI = function(menu, active){
+				return function(){
+					var set; 
+					switch(menu){
+						case 'tabs':	set = tabs;			break;
+						case 'buttons':	set = buttons;		break;
+						case 'zoom':	set = zoomButtons;	break;
+					}
+						
+					for(var i=0; i<set.length; i++){
+						if(i == active){
+							set[i].activate();
+						}
+						else{
+							set[i].deactivate();
+						}
+					}
+				}
+			}
+			
+			var setPokemon = function(numPokemon, gen, redrawEditor){
+				return function(){
+					if(numPokemon == 0){ //remove
+						updatePokemon(context.main == 'self' ? 0 : 1, undefined);
+						updateImage();
+					}
+					else{
+						var curPokemon = pokemon[context.main == 'self' ? 0 : 1][context.pokemonNum];
+						if(curPokemon && curPokemon.num == numPokemon && curPokemon.gen == gen){
+							return;
+						}
+						var i_pokemon = new Image();
+						i_pokemon.src = getPokemonImagePath(numPokemon, gen)//"pokemon/"+genPaths[gen]+"/"+numPokemon+".png";
+						i_pokemon.onload = function(){
+							var c_sprite = document.createElement('canvas');
+							c_sprite.width = c_sprite.height = spriteSize;
+							var ctx_sprite = c_sprite.getContext('2d');
+							ctx_sprite.drawImage(i_pokemon, 0, 0);
+							var imgData = ctx_sprite.getImageData(0, 0, spriteSize, spriteSize).data;
+							
+							var topRow = -1;
+							for(var i=0; i<spriteSize; i++){ //scan every row of pixels (line)
+								var colorFound = false;
+								for(var p=0; p<spriteSize*4; p+=16){ //check every 4 pixels;
+									if(imgData[i*spriteSize*4 + p + 3] != 0){ //+3 = alpha channel
+										colorFound = true;
+										if(topRow == -1){
+											topRow = i;
+										}
+										break;
+									}
+								}
+								if((!colorFound || i==spriteSize-1) && topRow != -1 && i-topRow > 10){
+									if(context.main != 'self'){
+										var sizeCorrection = Math.max(0, (Math.min(70, i-topRow)-35)/35) * 8; //Remap to 35-70 --> 0-21
+										var weightedFloorLevel = parseInt(spriteSize-i + sizeCorrection);
+										updatePokemon(1, new Sprite(i_pokemon, 0, 0, weightedFloorLevel, numPokemon, gen));
+									}
+									else{
+										if(gen < 12){
+											updatePokemon(0, new Sprite(i_pokemon, 0, 0, -i, numPokemon, gen));
+										}
+										else{
+											updatePokemon(0, new Sprite(i_pokemon, 0, 0, 0, numPokemon, gen));
+										}
+									}
+									updateImage();
+									if(redrawEditor){
+										updateEditor(numPokemon);
+									}
+									break;
+								}
+							}
+						}
+					}
+				}
+			};
+			
+			var setTrainer = function(numTrainer, pose, redrawEditor){
+				return function(){
+					if(numTrainer == 0){ //remove
+						trainers[0] = undefined;
+						updateImage();
+					}
+					else{
+						var i_trainer = new Image();
+						i_trainer.src = "characters/trainers/"+numTrainer+"/"+pose+".png";
+						i_trainer.onload = function(){
+							trainers[0] = new Sprite(i_trainer, 0, 64, 0, numTrainer, pose);
+							updateImage();
+						}
+					}
+					
+					if(redrawEditor){
+						updateEditor(numTrainer);
+					}
+				}	
+			}
+			
+			function updatePokemon(char, sprite){
+				if(sprite){
+					pokemon[char][context.pokemonNum] = sprite;
+				}
+				else{
+					pokemon[char][context.pokemonNum] = undefined;
+				}
+				
+				var totPokemon = (pokemon[char][0] ? 1 : 0) + (pokemon[char][1] ? 1 : 0) + (pokemon[char][2] ? 1 : 0);
+				
+				if(totPokemon >= 0){
+					var curPos = 0;
+					for(var i=0; i<3; i++){
+						if(pokemon[char][i]){
+							var oldGenCorrection = (context.main == 'self' && pokemon[char][i].gen < 12) ? 0 : 1;
+							var coords = posPokemon[char+oldGenCorrection][totPokemon-1][curPos];		//char, singdoubtrip, pos, x/y
+							var offsetX = 0; //Gen IV+
+							if(pokemon[char][i].gen < 6){
+								offsetX = 20;
+							}
+							else if(pokemon[char][i].gen < 9){
+								offsetX = 8;
+							}
+							pokemon[char][i] = new Sprite(pokemon[char][i].img, coords[0]+offsetX, coords[1]+pokemon[char][i].offsetY,
+														  pokemon[char][i].offsetY, pokemon[char][i].num, pokemon[char][i].gen);
+							curPos++;
+						}
+					}
+				}
+			}
+			
+			function updateCharacteristics(){
+				var char = context.main=='self' ? 0 : 1;
+				var num = pokemon[char][context.pokemonNum].num;
+				var gen = pokemon[char][context.pokemonNum].gen;
+				
+				var path = getPokemonImagePath(num, gen);
+				
+				var i_pokemon = new Image();
+				i_pokemon.src = path;
+				i_pokemon.onload = function(weightedFloorLevel, num, gen){
+					return function(){
+						updatePokemon(char, new Sprite(i_pokemon, 0, 0, weightedFloorLevel, num, gen));
+						updateImage();
+					}
+				}(pokemon[char][context.pokemonNum].offsetY, num, gen);
+			}
+			
+			function getPokemonImagePath(num, gen){
+				var path = "pokemon/"+genPaths[gen]+"/";
+				if(context.main == 'self'){
+					path += "back/";
+				}
+				if(document.getElementById('characteristic_shiny').checked && gen > 2){
+					path += "shiny/";
+				}
+				if(document.getElementById('characteristic_female').checked && gen > 8){
+					var req = new XMLHttpRequest();
+				    req.open('GET', "pokemonExists.php?path="+path+"female/"+num+".png", false);
+				    req.onreadystatechange = function(){
+				    	if(req.responseText == 1){
+							path += "female/";
+				    	}
+				    }
+				    req.send();
+				}
+				path += num+".png";
+				return path;
+			}
+			
+			function drawSprite(sprite){
+				if(sprite){
+//					alert(sprite.x+" - "+sprite.y);
+					ctx_image.drawImage(sprite.img, sprite.x, sprite.y);
+				}
+			}
+			
+			function updateImage(){
+				var w = renderSizes[context.zoomLevel][0];
+				var h = renderSizes[context.zoomLevel][1];
+				
+				ctx.clearRect(0, 0, w, h); //final image dimensions
+				ctx_image.clearRect(0, 0, renderSizes[0][0], renderSizes[0][1]); //final image dimensions
+				
+				ctx_image.drawImage(environment[context.environment][context.time], 0, 0);
+				ctx_image.drawImage(bases[context.environment][0], -42, 117);
+				ctx_image.drawImage(bases[context.environment][1], 128, 56);
+				
+				drawSprite(pokemon[0][0]);
+				drawSprite(pokemon[0][1]);
+				drawSprite(pokemon[0][2]);
+				drawSprite(trainers[0]);
+				
+				drawSprite(pokemon[1][0]);
+				drawSprite(pokemon[1][2]);
+				drawSprite(pokemon[1][1]);
+				drawSprite(trainers[1]);
+				
+				updateTextArea();
+				
+				ctx.drawImage(c_image, 0, 0, w, h);
+			}
+			
+			function updateTextArea(){
+				ctx_image.fillRect(0, 144, 256, 46);
+				ctx_image.putImageData(textBoxes[0], 0, 144);
+//				alert(textBoxes[0].data[3]);
+//				alert(document.getElementById("battleText").value);
+				ctx_image.fillText(document.getElementById("battleText").value, 20, 165);
+			}
+			
+			function updateSelector(){
+				ctx.clearRect(iconX, iconY, iconColumns[1]*iconSizes[1], iconRows[1]*iconSizes[1]);
+				switch(context.sub){
+					case 'trainer':	for(var i=0; i<17; i++){ //17 = numTrainers
+										var n = i;// + iconColumns[0]*iconRows[1]*context.trainerpage;
+										var img = new Image();
+										img.src = n==0 ? "GUI/del.png" : "characters/trainers/"+n+"/0.png";
+										img.onload = (function(img, i, n){
+											return function(){
+												var x = iconX + (i%iconColumns[0])*iconSizes[0];
+												var y = iconY + Math.floor(i/iconColumns[0])*iconSizes[0];
+												
+												ctx.drawImage(img, x, y, iconSizes[0], iconSizes[0]);
+//												ctx.strokeRect(x, y, iconSizes[1], iconSizes[1]);
+												bounds["trainer"+i] = new Bounds(x, y, iconSizes[0], iconSizes[0], setTrainer(n, 0, true));
+											}
+										})(img, i, n);
+									}
+									break;
+					case 'pokemon':	for(var i=0; i<iconColumns[1]*iconRows[1]; i++){
+										var n = i + iconColumns[1]*iconRows[1]*context.pokemonpage;
+										var img = new Image();
+										img.src = n==0 ? "GUI/del.png" : "pokemon/heartgold-soulsilver/"+n+".png";
+										img.onload = (function(img, i, n){
+											return function(){
+												var x = iconX + (i%iconColumns[1])*iconSizes[1];
+												var y = iconY + Math.floor(i/iconColumns[1])*iconSizes[1];
+												
+												ctx.drawImage(img, x, y, iconSizes[1], iconSizes[1]);
+					//							ctx.strokeRect(x, y, iconSizes[1], iconSizes[1]);
+												bounds["pokemon"+i] = new Bounds(x, y, iconSizes[1], iconSizes[1], setPokemon(n, 11, true)); //11 = HGSS sprites
+											}
+										})(img, i, n);
+									}
+									break;
+				}
+			}
+			
+			function updateEditor(numEntity){
+				for(var key in bounds){
+					if(key.startsWith("editor")){
+						delete bounds[key];
+					}
+				}
+				
+				ctx.clearRect(editorX, editorY, editorColumns[0]*iconSizes[0], editorRows[0]*iconSizes[0]);
+				var spritesFound = 0;
+				
+				switch(context.sub){
+					case 'trainer':		for(var i=0; i<8; i++){ //8 = maxSprites
+											var path = "characters/trainers/"+numEntity+"/"+i+".png";
+											var req = new XMLHttpRequest();
+										    req.open('GET', "pokemonExists.php?path="+path, false);
+										    req.onreadystatechange = function(){
+										    	if(req.responseText != 1){
+										    		return;
+										    	}
+										    	var img = new Image();
+												img.src = path;
+												img.onload = (function(img, i, numEntity, pos){
+													return function(){
+														var x = editorX + (pos%editorColumns[0])*iconSizes[0];
+														var y = editorY + Math.floor(pos/editorColumns[0])*iconSizes[0];
+														
+														ctx.drawImage(img, x, y, iconSizes[0], iconSizes[0]);
+//														alert(pos+" - "+editorColumns);
+							//							ctx.strokeRect(x, y, iconSizes[1], iconSizes[1]);
+														bounds["editor"+i] = new Bounds(x, y, iconSizes[0], iconSizes[0], setTrainer(numEntity, i, false));
+													}
+												})(img, i, numEntity, spritesFound);
+										    	spritesFound++;
+										    };
+										    req.send();
+										}
+										break;
+					
+					case 'pokemon':		for(var i=0; i<genPaths.length; i++){
+											var path = "pokemon/"+genPaths[i]+"/"+numEntity+".png";
+											var req = new XMLHttpRequest();
+										    req.open('GET', "pokemonExists.php?path="+path, false);
+										    req.onreadystatechange = function(){
+										    	if(req.responseText != 1){
+										    		return;
+										    	}
+										    	var img = new Image();
+												img.src = path;
+												img.onload = (function(img, i, numEntity, pos){
+													return function(){
+														var x = editorX + (pos%editorColumns[1])*iconSizes[1];
+														var y = editorY + Math.floor(pos/editorColumns[1])*iconSizes[1];
+														
+														ctx.drawImage(img, x, y, iconSizes[1], iconSizes[1]);
+							//							ctx.strokeRect(x, y, iconSizes[1], iconSizes[1]);
+														bounds["editor"+i] = new Bounds(x, y, iconSizes[1], iconSizes[1], setPokemon(numEntity, i, false));
+													}
+												})(img, i, numEntity, spritesFound);
+										    	spritesFound++;
+										    };
+										    req.send();
+										}
+										break;
+				}
+			}
+			
+			var setContext = function(cat, val, pokemonNum){
+				return function(){
+					switch(cat){
+						case 'main':		context.main = val;			break;
+						case 'sub':			var oldSub = context.sub;
+											context.sub = val;
+											if(oldSub != context.sub){
+												updateSelector();
+											}
+											break;
+						case 'pokemonpage':	var oldPage = context.pokemonpage;
+											context.pokemonpage = Math.max(0, Math.min(context.pokemonpage+val, 4));
+											if(oldPage != context.pokemonpage){
+												updateSelector();
+											}
+											break;
+						case 'zoom':		var oldZoom = context.zoomLevel;
+											context.zoomLevel = val;
+											if(oldZoom != context.zoomLevel){
+												ctx.clearRect(0, 0, renderSizes[oldZoom][0], renderSizes[oldZoom][1]);
+												updateImage();
+											}
+											break;
+					}
+					
+					if(pokemonNum != undefined){
+						context.pokemonNum = pokemonNum;
+					}
+				}
+			};
+			
+			var context = {main: 'self', sub:'trainer', pokemonNum:0, pokemonpage:0, environment:0, time:0, zoomLevel:0};
+			
+			var setBtnX = 600;
+			var setBtnY = 10;
+			var setBtnSh = 110; //spacing horizontal
+			var setBtnSv = 30; //spacing vertical
+			
+			var zoomBtnX = 0;
+			var zoomBtnY = 250;
+			var zoomBtnSh = 75; //spacing horizontal
+			
+//			var bounds = {"setTrainerSelf": new Bounds(400, 50, 100, 50, drawPokemon, 492),
+//							};
+			var bounds = {};
+			var tabs = [];
+			var buttons = [];
+			var zoomButtons = [];
+//			var trainerSelf, pokemonSelf1, pokemonSelf2, pokemonSelf3, trainerOpp, pokemonOpp1, pokemonOpp2, pokemonOpp3; //sprites
+			var trainers = [];
+			var pokemon = [[], []]; //[[self1, self2, self3], [opp1, opp2, opp3]]
+			var environment = [[], [], []];
+			var bases = [[]]; //front, back
+			var textBoxes = [];
+			var genPaths = ["red-green", "red-blue", "yellow", "gold", "silver", "crystal", "ruby-sapphire", "emerald",
+							"firered-leafgreen", "diamond-pearl", "platinum", "heartgold-soulsilver", "black-white"];
+			
+			var renderSizes = [[256, 190], [384, 285], [512, 380]];
+//			var smallPokemon = [1,2,4,5,7,8,10,11,13,14,16,19,20,21,23,27,28,29,32,35,37,39,43,44,46];
+			
+			var c = document.getElementById("myCanvas");
+			var ctx = c.getContext("2d");
+			
+			var spriteSize = 80;
+			
+			var posPokemon = [[[[32, 152]],  [[0, 152], [40, 164]],  [[0, 152], [40, 158], [86, 164]]],
+							  [[[40, 0]],  [[20, 0], [60, 0]],  [[0, 0], [40, 0], [80, 0]]],
+							  [[[150, 10]],  [[136, 4], [175, 15]],  [[126, 4], [145, 15], [185, 14]]]];
+							  //[[single], [double1, double2], [triple1, triple2, triple3]]	x3 (self gen1-12, self gen13, opp) char, singdoubtrip, pos, x/y
+			var iconX = 600;
+			var iconY = 70;
+			var iconColumns = [5, 10];
+			var iconRows = [5, 11];
+			var iconSizes = [80, 40];
+			var pageOffsetX = 70;
+			
+			var editorX = 300;
+			var editorY = 70;
+			var editorColumns = [3, 5];
+			var editorRows = [3, 3];
+			
+			environment[0][0] = new Image();
+			environment[0][0].src = "environment/grassland/day.png";
+//			environment[0][0].onload = function(){updateImage();};
+			
+			bases[0][0] = new Image();
+			bases[0][0].src = "environment/grassland/base_front.png";
+//			bases[0][0].onload = function(){updateImage();};
+			
+			bases[0][1] = new Image();
+			bases[0][1].src = "environment/grassland/base_back.png";
+//			bases[0][1].onload = function(){updateImage();};
+			
+			var c_image = document.createElement('canvas');
+			c_image.width = 256;
+			c_image.height = 190;
+			var ctx_image = c_image.getContext('2d');
+			
+			var c_selector = document.createElement('canvas');
+			c_selector.width = 435;
+			c_selector.height = 540;
+			var ctx_selector = c_selector.getContext('2d');
+			
+			var c_editor = document.createElement('canvas');
+			c_editor.width = 260;
+			c_editor.height = 245;
+			var ctx_editor = c_editor.getContext('2d');
+
+			var c_zoom = document.createElement('canvas');
+			c_zoom.width = 225;
+			c_zoom.height = 40;
+			var ctx_zoom = c_zoom.getContext('2d');
+						
+			var c_textBoxes = document.createElement('canvas');
+			var ctx_textBoxes = c_textBoxes.getContext('2d');
+			var i_textBoxes = new Image();
+			i_textBoxes.src = "GUI/textBoxes_HGSS.png";
+			i_textBoxes.onload = function(){
+				c_textBoxes.width = i_textBoxes.width;
+				c_textBoxes.height = i_textBoxes.height;
+				ctx_textBoxes.drawImage(i_textBoxes, 0, 0);
+				textBoxes[0] = ctx_textBoxes.getImageData(0, 0, 256, 46);
+				updateImage();
+			};
+			
+			new Button("setNextPage", "GUI/next", iconX + iconColumns[1]*iconSizes[1]*0.5 + pageOffsetX, iconY + iconRows[1]*iconSizes[1], false,
+					   setContext('pokemonpage', 1));
+			new Button("setPrevPage", "GUI/prev", iconX + iconColumns[1]*iconSizes[1]*0.5 - pageOffsetX - iconSizes[1], iconY + iconRows[1]*iconSizes[1],
+					   false, setContext('pokemonpage', -1));
+			
+			tabs[0] = new Button("setSelf", "GUI/tab_self", setBtnX, setBtnY, true, setContext('main', 'self'), updateUI('tabs', 0), true);
+			tabs[1] = new Button("setOpp", "GUI/tab_opponent", setBtnX+100, setBtnY, true, setContext('main', 'opp'), updateUI('tabs', 1));
+			
+			buttons[0] = new Button("setTrainer", "GUI/btn_blue_trainer", setBtnX, setBtnY+setBtnSv, true, setContext('sub', 'trainer'), updateUI('buttons', 0), true);
+			buttons[1] = new Button("setPokemon1", "GUI/btn_blue_pokemon1", setBtnX+setBtnSh, setBtnY+setBtnSv, true, setContext('sub', 'pokemon', 0), updateUI('buttons', 1));
+			buttons[2] = new Button("setPokemon2", "GUI/btn_blue_pokemon2", setBtnX+setBtnSh*2, setBtnY+setBtnSv, true, setContext('sub', 'pokemon', 1), updateUI('buttons', 2));
+			buttons[3] = new Button("setPokemon3", "GUI/btn_blue_pokemon3", setBtnX+setBtnSh*3, setBtnY+setBtnSv, true, setContext('sub', 'pokemon', 2), updateUI('buttons', 3));
+			
+			zoomButtons[0] = new Button("setZoom1", "GUI/btn_zoom_1x", zoomBtnX, zoomBtnY, true, setContext('zoom', 0), updateUI('zoom', 0), true);
+			zoomButtons[1] = new Button("setZoom2", "GUI/btn_zoom_1_5x", zoomBtnX+zoomBtnSh, zoomBtnY, true, setContext('zoom', 1), updateUI('zoom', 1), false);
+			zoomButtons[2] = new Button("setZoom3", "GUI/btn_zoom_2x", zoomBtnX+zoomBtnSh*2, zoomBtnY, true, setContext('zoom', 2), updateUI('zoom', 2), false);
+			
+			
+			tabs[0].activate();
+			buttons[0].activate();
+			zoomButtons[0].activate();
+			
+			updateSelector();
+			
+			c.onclick = function(e) {
+				for(var key in bounds){
+					if((key.startsWith(context.sub) || key.startsWith("set") || key.startsWith("editor")) && bounds[key] &&
+					   bounds[key].inBounds(e.clientX - c.getBoundingClientRect().left, e.clientY - c.getBoundingClientRect().top)){
+						bounds[key].execute();
+						bounds[key].update();
+					}
+				}
+			}
+      
+		</script> 
+	</body>
+</html>

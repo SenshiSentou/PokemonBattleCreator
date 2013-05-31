@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+	<head>
+	</head>
+	<body>
+		<canvas id="myCanvas" width="1000" height="600"></canvas> 
+		
+		<script>
+			function Bounds(x, y, w, h, callback, param){
+				this.x = x;
+				this.y = y;
+				this.w = w;
+				this.h = h;
+				this.execute = callback;
+				this.param = param;
+				this.inBounds = function(x, y){
+					return x >= this.x && x <= this.x + this.w && y >= this.y && y <= this.y + this.h;
+				}
+			}
+			
+			var drawPokemon = function(numPokemon){
+				var i_pokemon = ctx_pokemonBackMale.getImageData(numPokemon%tpr * tw + (numPokemon%5 * ts), Math.floor(numPokemon/tpr) * th + Math.floor(numPokemon/tpr)*ts, tw, th);
+				
+				for(var i = 0, len = i_pokemon.data.length; i < len; i += 4){ //asume top-left pixel is always background color
+			        if(i_pokemon.data[i] == i_pokemon.data[0] && i_pokemon.data[i+1] == i_pokemon.data[1] && i_pokemon.data[i+2] == i_pokemon.data[2]){
+			            i_pokemon.data[i+3] = 0;
+			        }
+				}
+				ctx.putImageData(i_pokemon, 0, 0);
+			}
+			
+			var buttons = {"showPokemon": new Bounds(400, 50, 100, 50, drawPokemon, 492),
+							};
+			
+			var tw = 160; //tile width
+			var th = 80; //tile height
+			var ts = 1; //tile spacing
+			var tpr = 5; //tiles per row
+			
+			var c = document.getElementById("myCanvas");
+			var ctx = c.getContext("2d");
+
+			var b_showPokemon = new Image();
+			
+			var i_pokemonBackMale = new Image();
+			
+			var c_pokemonBackMale = document.createElement('canvas');
+			var ctx_pokemonBackMale = c_pokemonBackMale.getContext('2d');
+			
+			b_showPokemon.onload = function(){
+			  ctx.drawImage(b_showPokemon, buttons["showPokemon"].x, buttons["showPokemon"].y);
+			};
+			
+			i_pokemonBackMale.onload = function(){
+				c_pokemonBackMale.width = i_pokemonBackMale.width;
+				c_pokemonBackMale.height = i_pokemonBackMale.height;
+				ctx_pokemonBackMale.drawImage(i_pokemonBackMale, 0, 0);
+			};
+			
+			b_showPokemon.src = "btn.png";
+			i_pokemonBackMale.src = "HGSS/pokebacksm.png";
+			
+			c.onclick = function(e) {
+				for(var key in buttons){
+					if(buttons[key].inBounds(e.pageX - c.getBoundingClientRect().left, e.pageY - c.getBoundingClientRect().top)){
+						buttons[key].execute(buttons[key].param);
+					}
+				}
+			}
+      
+		</script> 
+	</body>
+</html>

@@ -1,0 +1,2166 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+	</head>
+	<body>
+		<style type="text/css">
+			body{
+				background-image:url("GUI/diag_lines.png");
+				background-repeat:repeat;
+			} 
+		</style>
+	
+		<div id="BattleTextDiv" style="position:absolute; top:200px; left:10px; width:250px; height:50px;">
+			<textarea id="battleText" rows="2" oninput="updateImage();" style="width: 250px; resize: none; font-size:12px">Trainer X wants to battle!</textarea>
+		</div>
+		
+		<div id="GenInfoDiv" style="position:absolute; top:200px; left:20px; width:50px; height:10px; font-size:7pt; color:#FFF; visibility:hidden; pointer-events:none">
+			Some Gen!
+		</div>
+		
+		<canvas id="canvas" width="1200" height="570"></canvas> 
+
+//		<script src="ColorUtil.js"></script>
+
+		<script>
+			if(typeof String.prototype.startsWith != 'function'){
+			  String.prototype.startsWith = function(str){
+			    return this.lastIndexOf(str, 0) == 0;
+			  };
+			}
+			
+			if(!HTMLCanvasElement.prototype.x){
+				HTMLCanvasElement.prototype.x = 0;
+			}
+			
+			if(!HTMLCanvasElement.prototype.y){
+				HTMLCanvasElement.prototype.y = 0;
+			}
+			
+			if(!CanvasRenderingContext2D.prototype.drawToContext){
+				CanvasRenderingContext2D.prototype.drawToContext = function(c, clearFirst){
+					if(clearFirst){
+//						alert(c+" - "+this.x);
+						c.clearRect(this.canvas.x, this.canvas.y, this.canvas.width, this.canvas.height);
+					}
+					c.drawImage(this.canvas, this.canvas.x, this.canvas.y);
+			  };
+			}
+			
+			if(!CanvasRenderingContext2D.prototype.drawRoundedRect){
+				CanvasRenderingContext2D.prototype.drawRoundedRect = function(x, y, width, height, radius, fill, stroke, lineWidth){
+					this.beginPath();
+					this.moveTo(x + radius, y);
+					this.lineTo(x + width - radius, y);
+					this.quadraticCurveTo(x + width, y, x + width, y + radius);
+					this.lineTo(x + width, y + height - radius);
+					this.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+					this.lineTo(x + radius, y + height);
+					this.quadraticCurveTo(x, y + height, x, y + height - radius);
+					this.lineTo(x, y + radius);
+					this.quadraticCurveTo(x, y, x + radius, y);
+					this.closePath();
+					
+					if(fill != undefined){
+//						alert(this);
+						this.fillStyle = fill;
+						this.fill();
+					}
+					
+					if(stroke != undefined){
+						this.strokeStyle = stroke;
+						this.lineWidth = lineWidth;
+						this.stroke();
+					}        
+				}
+			}
+			
+			//Major thanks for Michael Jackson 'mjijackson' for these!
+			function rgbToHsl(r, g, b){
+			    r /= 255, g /= 255, b /= 255;
+			    var max = Math.max(r, g, b), min = Math.min(r, g, b);
+			    var h, s, l = (max + min) / 2;
+			
+			    if(max == min){
+			        h = s = 0; // achromatic
+			    }else{
+			        var d = max - min;
+			        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+			        switch(max){
+			            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+			            case g: h = (b - r) / d + 2; break;
+			            case b: h = (r - g) / d + 4; break;
+			        }
+			        h /= 6;
+			    }
+			
+			    return [h, s, l];
+			}
+			
+			function hslToRgb(h, s, l){
+			    var r, g, b;
+			
+			    if(s == 0){
+			        r = g = b = l; // achromatic
+			    }else{
+			        function hue2rgb(p, q, t){
+			            if(t < 0) t += 1;
+			            if(t > 1) t -= 1;
+			            if(t < 1/6) return p + (q - p) * 6 * t;
+			            if(t < 1/2) return q;
+			            if(t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+			            return p;
+			        }
+			
+			        var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+			        var p = 2 * l - q;
+			        r = hue2rgb(p, q, h + 1/3);
+			        g = hue2rgb(p, q, h);
+			        b = hue2rgb(p, q, h - 1/3);
+			    }
+			
+			    return [r * 255, g * 255, b * 255];
+	}
+			
+			function Bounds(x, y, w, h, section, execute, update, ac){
+				this.x = x;
+				this.y = y;
+				this.w = w;
+				this.h = h;
+				this.section = section;
+				this.execute = execute;
+				this.ac = (ac==undefined) ? true : ac;
+				if(update){
+					this.update = update;
+				}
+				else{
+					this.update = function(){}; //empty function; kinda ugly?
+				}
+				this.inBounds = function(x, y){
+					return x >= this.x && x <= this.x + this.w && y >= this.y && y <= this.y + this.h;
+				}
+			}
+			
+			function Button(name, img_src, x, y, hasActive, gctx, section, execute, update, activatedOnStart, ac){
+				this.name = name;
+				this.x = x;
+				this.y = y;
+				this.gctx = gctx;
+				this.enabled = false;
+				
+				var _ac = (ac==undefined) ? true : ac;
+				
+				if(hasActive){
+					var btn_enabled = new Image();
+					btn_enabled.src = img_src+"_active.png";
+				}
+				var btn_disabled = new Image();
+				btn_disabled.src = img_src+".png";
+				btn_disabled.onload = function(){
+					if(!activatedOnStart && _ac){ //abuse ac for first-time drawing
+						gctx.drawImage(btn_disabled, x, y);
+						gctx.drawToContext(ctx, true);
+					}
+					bounds[name] = new Bounds(x + gctx.canvas.x, y + gctx.canvas.y, btn_disabled.width, btn_disabled.height, section, execute, update, _ac);
+				}
+				
+				this.activate = function(){
+					if(bounds[this.name] && bounds[this.name].ac){
+						if(btn_enabled.complete){
+							gctx.drawImage(btn_enabled, x, y);
+							gctx.drawToContext(ctx, true);
+							this.enabled = true;
+						}
+						else{
+							btn_enabled.onload = function(){
+								gctx.drawImage(btn_enabled, x, y);
+								gctx.drawToContext(ctx, true);
+								this.enabled = true;
+							}
+						}
+					}
+				}
+				
+				this.deactivate = function(){
+					gctx.drawImage(btn_disabled, x, y);
+					gctx.drawToContext(ctx, true);
+					this.enabled = false;
+				}
+				
+				this.toggle = function(){
+					this.enabled = !this.enabled;
+					gctx.drawImage(this.enabled ? btn_enabled : btn_disabled, x, y);
+					gctx.drawToContext(ctx, true);
+				}
+				
+				this.draw = function(){ //sometimes a manual redraw is needed
+					gctx.drawImage(this.enabled ? btn_enabled : btn_disabled, x, y);
+					gctx.drawToContext(ctx, true);
+				}
+			}
+			
+			function Sprite(img, x, y, offsetY, num, gen){
+				this.img = img;
+				this.x = x;
+				this.y = y;
+				this.offsetY = offsetY;
+				this.num = num;
+				this.gen = gen;
+			}
+			
+			var updateUI = function(menu, active){
+				return function(){
+					var set;
+					switch(menu){
+						case 'tabs':				set = tabs;							break;
+						case 'characterButtons':	set = characterButtons;				break;
+						case 'sceneButtons':		set = sceneButtons;					break;
+						case 'gender':				set = genderButtons;				break;
+						case 'shiny':				shinyButton.toggle();	return;		break;
+						case 'zoom':				set = zoomButtons;					break;
+					}
+						
+					for(var i=0; i<set.length; i++){
+						if(i == active){
+							set[i].activate();
+						}
+						else{
+							set[i].deactivate();
+						}
+					}
+				}
+			}
+			
+			var setPokemon = function(numPokemon, gen, redrawEditor){
+				return function(){
+					if(numPokemon.toString().split("-")[0] != context.pokemon.toString().split("-")[0] || gen != context.pokemonGen){
+//						alert(numPokemon +" -> "+ context.pokemon + " -- " + gen + " -> " + context.pokemonGen);
+						context.editorpage = 0;
+						context.trainer = -1; //looks weird, but disables editor page buttons
+						context.pokemon = numPokemon;
+						context.pokemonGen = gen;
+					}
+					
+					
+					if(numPokemon == 0){ //remove
+						updatePokemon(context.main == 'self' ? 0 : 1, undefined);
+						updateImage();
+					}
+					else{
+						var curPokemon = pokemon[context.main == 'self' ? 0 : 1][context.pokemonNum];
+						if(curPokemon && curPokemon.num == numPokemon && curPokemon.gen == gen){
+							return;
+						}
+						var i_pokemon = new Image();
+						i_pokemon.src = getPokemonImagePath(numPokemon, gen)//"pokemon/"+genPaths[gen]+"/"+numPokemon+".png";
+						i_pokemon.onload = function(){
+							var c_sprite = document.createElement('canvas');
+							c_sprite.width = c_sprite.height = spriteSize;
+							var ctx_sprite = c_sprite.getContext('2d');
+							ctx_sprite.drawImage(i_pokemon, 0, 0);
+							var imgData = ctx_sprite.getImageData(0, 0, spriteSize, spriteSize).data;
+							
+							var topRow = -1;
+							for(var i=0; i<spriteSize; i++){ //scan every row of pixels (line)
+								var colorFound = false;
+								for(var p=0; p<spriteSize*4; p+=16){ //check every 4 pixels;
+									if(imgData[i*spriteSize*4 + p + 3] != 0){ //+3 = alpha channel
+										colorFound = true;
+										if(topRow == -1){
+											topRow = i;
+										}
+										break;
+									}
+								}
+								if((!colorFound || i==spriteSize-1) && topRow != -1 && i-topRow > 10){
+									if(context.main == 'self'){
+										if(gen < 12){
+											var genCorrection = 0;
+											if(gen < 3){
+												genCorrection = 8;
+											}
+											updatePokemon(0, new Sprite(i_pokemon, 0, 0, -(i+genCorrection), numPokemon, gen));
+										}
+										else{
+											updatePokemon(0, new Sprite(i_pokemon, 0, 0, 0, numPokemon, gen));
+										}
+									}
+									else{
+										var sizeCorrection = Math.max(0, (Math.min(70, i-topRow)-35)/35) * 8; //Remap to 35-70 --> 0-21
+										var weightedFloorLevel = parseInt(spriteSize-i + sizeCorrection);
+										updatePokemon(1, new Sprite(i_pokemon, 0, 0, weightedFloorLevel, numPokemon, gen));
+									}
+									updateImage();
+									if(redrawEditor){
+										updateEditor(numPokemon, 2, 'gens', false);
+									}
+									break;
+								}
+							}
+						}
+					}
+				}
+			};
+			
+			var setTrainer = function(numTrainer, gen, pose, redrawEditor, showTrainerPages){
+				return function(){
+					var char = context.main == 'self' ? 0 : 1;
+					if(context.trainer != numTrainer || context.trainerGen != gen){
+						context.editorpage = 0;
+						context.trainer = numTrainer;
+					}
+					if(showTrainerPages){
+						context.maxeditorpage = Math.max(0, Math.floor(numTrainerFrames[char][numTrainer][trainerGens[char][numTrainer].indexOf(gen)]/6));
+					}
+					context.trainerGen = gen;
+					if(numTrainer == -1){ //remove
+//					alert("-1");
+						trainers[char] = undefined;
+						updateImage();
+					}
+					else{
+						var path = "characters/trainers/"+(char == 0 ? "back" : "front")+"/";
+						var prevTrainers = 0;
+						for(var i=0; i<trainerPaths.length; i++){ //i < ["Heroes", ...]
+							if(numTrainer < numTrainers[char][i] + prevTrainers){
+								path += trainerPaths[i]+"/"+(numTrainer - prevTrainers)+"/"+gen; //path is now /front/Heroes/1/rgb e.g.
+								break;
+							}
+							else{
+								prevTrainers += numTrainers[char][i];
+							}
+						}
+						
+						var i_trainer = new Image();
+						i_trainer.src = path+"/"+pose+".png";
+						i_trainer.onload = function(){
+							var corrX = 0;//char == 0 ? 0 : -i_trainer.width*0.75;//Math.round((Math.max(96, i_trainer.width) - i_trainer.width)*0.5);
+							var corrY = 0;//Math.round((96 - i_trainer.height)*0.5);
+							
+							if(char == 1){
+								var c_sprite = document.createElement('canvas');
+								c_sprite.width = i_trainer.width;
+								c_sprite.height = i_trainer.height;
+								var ctx_sprite = c_sprite.getContext('2d');
+								ctx_sprite.drawImage(i_trainer, 0, 0);
+								var imgData = ctx_sprite.getImageData(0, 0, i_trainer.width, i_trainer.height).data;
+								
+								for(var i=i_trainer.width-1; i>0; i--){ //scan every column of pixels (vertical)
+									var colorFound = false;
+									for(var p=0; p<i_trainer.height*i_trainer.width*4; p+=i_trainer.width*4*2){ //check every 2 pixels
+										if(imgData[i*4 + p + 3] != 0){ //+3 = alpha channel
+											colorFound = true;
+											corrX = -i;
+//											alert(i);
+											break;
+										}
+									}
+									if(colorFound){
+										break;
+									}
+								}
+								
+								for(var i=i_trainer.height-1; i>0; i--){ //scan every row of pixels (line)
+									var colorFound = false;
+									for(var p=0; p<i_trainer.width*4; p+=16){ //check every 4 pixels;
+										if(imgData[i*i_trainer.width*4 + p + 3] != 0){ //+3 = alpha channel
+											colorFound = true;
+											corrY = -i;
+//											alert(i+" - "+imgData);
+											break;
+										}
+									}
+									if(colorFound){
+										break;
+									}
+								}
+							}
+							else{
+								corrY = 80 - i_trainer.height;
+							}
+//							alert(char + " - " + corrX + " - " + corrY);
+							trainers[char] = new Sprite(i_trainer, trainerPos[char][0] + corrX, trainerPos[char][1] + corrY, 0, numTrainer, pose);
+							updateImage();
+						}
+					}
+					
+					if(redrawEditor){
+						updateEditor(numTrainer, 2, 'gens', true);
+					}
+				}	
+			}
+			
+			function updatePokemon(char, sprite){
+				if(sprite){
+					pokemon[char][context.pokemonNum] = sprite;
+				}
+				else{
+					pokemon[char][context.pokemonNum] = undefined;
+				}
+				
+				var totPokemon = (pokemon[char][0] ? 1 : 0) + (pokemon[char][1] ? 1 : 0) + (pokemon[char][2] ? 1 : 0);
+				
+				if(totPokemon >= 0){
+					var curPos = 0;
+					for(var i=0; i<3; i++){
+						if(pokemon[char][i]){
+							var oldGenCorrection = (context.main == 'self' && pokemon[char][i].gen < 12) ? 0 : 1;
+							var coords = posPokemon[char+oldGenCorrection][totPokemon-1][curPos];		//char, singdoubtrip, pos, x/y
+							var offsetX = 0; //Gen IV+
+							if(pokemon[char][i].gen < 6){
+								offsetX = 20;
+							}
+							else if(pokemon[char][i].gen < 9){
+								offsetX = 8;
+							}
+							pokemon[char][i] = new Sprite(pokemon[char][i].img, coords[0]+offsetX, coords[1]+pokemon[char][i].offsetY,
+														  pokemon[char][i].offsetY, pokemon[char][i].num, pokemon[char][i].gen);
+							curPos++;
+						}
+					}
+				}
+			}
+			
+			var updateCharacteristics = function(){
+//				return function(){
+					var char = context.main=='self' ? 0 : 1;
+					var num = pokemon[char][context.pokemonNum].num;
+					var gen = pokemon[char][context.pokemonNum].gen;
+					
+					var path = getPokemonImagePath(num, gen);
+					
+					var i_pokemon = new Image();
+					i_pokemon.src = path;
+					i_pokemon.onload = function(weightedFloorLevel, num, gen){
+						return function(){
+							updatePokemon(char, new Sprite(i_pokemon, 0, 0, weightedFloorLevel, num, gen));
+							updateImage();
+							updateEditor(undefined, 0, false);
+						}
+					}(pokemon[char][context.pokemonNum].offsetY, num, gen);
+//				}
+			}
+			
+			function getPokemonImagePath(num, gen){
+				var path = "pokemon/"+genPaths[gen]+"/";
+				if(context.main == 'self'){
+					path += "back/";
+				}
+//				if(document.getElementById('characteristic_shiny').checked && gen > 2){
+				if(shinyButton.enabled && gen > 2){
+					path += "shiny/";
+				}
+//				if(document.getElementById('characteristic_female').checked && gen > 8){
+				if(genderButtons[1].enabled && gen > 8){
+					var req = new XMLHttpRequest();
+				    req.open('GET', "fileExists.php?path="+path+"female/"+num+".png", false);
+				    req.onreadystatechange = function(){
+				    	if(req.responseText == 1){
+							path += "female/";
+				    	}
+				    }
+				    req.send();
+				}
+				path += num+".png";
+				return path;
+			}
+			
+			function drawSprite(sprite){
+				if(sprite){
+					ctx_image.drawImage(sprite.img, sprite.x, sprite.y);
+				}
+			}
+			
+			var setTime = function(time){
+				return function(){
+					context.time = time*0.5;
+					updateEditor(0, 2);
+					updateImage();
+				}
+			}
+			
+			var setBackground = function(numBg){
+				return function(){
+					if(numBg == -1){
+						background = [];
+					}
+					backgroundReady = false;
+					var bgsLoaded = 0;
+					for(var i=0; i<3; i++){
+						if(backgrounds[numBg].indexOf(i+".png") == -1){
+							background[i] = undefined;
+							bgsLoaded++; //technically incorrect..
+						}
+						else{
+							var i_bg = new Image();
+							i_bg.src = "environment/backgrounds/"+numBg+"/"+i+".png";
+							i_bg.onload = function(img, i){
+								return function(){
+									background[i] = img;
+									bgsLoaded++;
+									if(bgsLoaded == 3){
+										backgroundReady = true;
+										updateImage();
+										updateEditor(0, 2);
+									}
+								}
+							}(i_bg, i);
+						}
+					}
+				}
+			}
+			
+			function updateImage(){
+				var w = renderSizes[context.zoomLevel][0];
+				var h = renderSizes[context.zoomLevel][1];
+				
+				ctx.clearRect(0, 0, w, h); //final image dimensions
+				ctx_image.clearRect(0, 0, renderSizes[0][0], renderSizes[0][1]); //final image dimensions
+				
+				if(backgroundReady){ //assumes there's always a "1.png"
+					var bg_front;
+					var bg_back;
+					var alpha = 1 - context.time*2;
+					
+					if(context.time < 0.5 && backgrounds[0]){
+						bg_front = background[0];
+						bg_back = background[1];
+					}
+					
+					else if(context.time > 0.5 && backgrounds[2]){
+						bg_back = background[1];
+						bg_front = background[2];
+						alpha = context.time*2 - 1;
+					}
+					else{
+						bg_back = background[1];
+					}
+					
+					if(bg_front){
+//						ctx_image.drawImage(bg_back, 0, 0);
+						
+						var c_back = document.createElement('canvas');
+						c_back.width = bg_back.width;
+						c_back.height = bg_back.height;
+						var ctx_back = c_back.getContext('2d');
+						ctx_back.drawImage(bg_back, 0, 0);
+						
+						var c_front = document.createElement('canvas');
+						c_front.width = bg_front.width;
+						c_front.height = bg_front.height;
+						var ctx_front = c_front.getContext('2d');
+						ctx_front.drawImage(bg_front, 0, 0);
+						
+						var dat_back = ctx_back.getImageData(0, 0, bg_back.width, bg_back.height);
+						var dat_front = ctx_front.getImageData(0, 0, bg_front.width, bg_front.height);
+						var d_back = dat_back.data;
+						var d_front = dat_front.data;
+						
+						for(var i=0; i<d_back.length; i+=4){
+							var hslBack = rgbToHsl(d_back[i], d_back[i+1], d_back[i+2]);
+							var hslFront = rgbToHsl(d_front[i], d_front[i+1], d_front[i+2]);
+							var rgb = hslToRgb(hslBack[0], hslFront[1], hslFront[2]);
+							
+							d_back[i] = rgb[0];
+							d_back[i+1] = rgb[1];
+							d_back[i+2] = rgb[2];
+						}
+						
+						ctx_image.putImageData(dat_back, 0, 0);
+						
+						ctx_image.globalAlpha = alpha;
+						ctx_image.drawImage(bg_front, 0, 0);
+						ctx_image.globalAlpha = 1;
+					}
+					else{
+						ctx_image.drawImage(bg_back, 0, 0);
+					}
+					
+//					ctx_image.drawImage(background[0], 0, 0);
+				}
+//				drawSprite(bases[0]);
+//				drawSprite(bases[1]);
+				
+				if(bases[0].length > 0){ //draw front + back, not tintable
+					if(bases[0][0]){
+						ctx_image.drawImage(bases[0][0], -42, 117);
+					}
+					if(bases[0][1]){
+						ctx_image.drawImage(bases[0][1], 128, 56);
+					}
+				}
+				else if(basesReady && bases[1][1]){ //assume index 1 always exists
+					var base_front;
+					var base_back;
+					var alpha = 1 - context.time*2;
+					
+					if(context.time < 0.5 && bases[1][0]){
+						base_front = bases[1][0];
+						base_back = bases[1][1];
+					}
+					
+					else if(context.time >= 0.5 && bases[1][2]){
+						base_back = bases[1][1];
+						base_front = bases[1][2];
+						alpha = context.time*2 - 1;
+					}
+					else{
+						base_back = bases[1][1];
+					}
+					
+					ctx_image.drawImage(base_back, 0, 0);
+					if(base_front){
+						ctx_image.globalAlpha = alpha;
+						ctx_image.drawImage(base_front, 0, 0);
+						ctx_image.globalAlpha = 1;
+					}
+				}
+				
+				drawSprite(pokemon[0][0]);
+				drawSprite(pokemon[0][1]);
+				drawSprite(pokemon[0][2]);
+				drawSprite(trainers[0]);
+				
+				drawSprite(trainers[1]);
+				drawSprite(pokemon[1][0]);
+				drawSprite(pokemon[1][2]);
+				drawSprite(pokemon[1][1]);
+				
+				updateTextArea();
+				
+				ctx.drawImage(c_image, 0, 0, w, h);
+			}
+			
+			function updateTextArea(){
+				if(!textBoxes[0]){
+					return;
+				}
+				var textBoxColor = [0, 0, 0]; //[r, g, b]
+				for(var i=0; i<textBoxes[0].data.length; i+=4){
+					if(textBoxes[0].data[i+3] == 0){
+						textBoxes[0].data[i] = textBoxColor[0];
+						textBoxes[0].data[i+1] = textBoxColor[1];
+						textBoxes[0].data[i+2] = textBoxColor[2];
+						textBoxes[0].data[i+3] = 255;
+					}
+				}
+				ctx_image.putImageData(textBoxes[0], 0, 144);
+				
+				var battleText = document.getElementById("battleText").value;
+				if(battleText){
+					setText(battleText, ctx_image, 12, 150, 220, 30, 0, false, false);
+				}
+			}
+			
+			function setText(text, gctx, x, y, w, h, textSize, centerX, centerY, wrapWords, callback){
+				if(!textReady){
+					return;
+				}
+				var textCanvas = document.createElement('canvas'); //holds the actual text
+				textCanvas.width = w;
+				textCanvas.height = h;
+				var textContext = textCanvas.getContext('2d');
+				
+				var charXText = 0;
+				var charYText = 0;
+				for(var i=0; i<text.length; i++){
+					if(text[i] == "\n"){
+						charYText += characterHeights[textSize] + 4;
+						charXText = 0;
+						continue;
+					}
+					if(text[i] == " "){
+						charXText += 4;
+						continue;
+					}
+					var set = -1;
+					for(var j=0; j<characterSets[textSize].length; j++){
+						if(characterSets[textSize][j].indexOf(text[i]) > -1){
+							set = j;
+						}
+					}
+					if(set == -1){
+						text = text.substr(0, i) + "?" + text.substr(i+1);
+						set = textSize == 0 ? 3 : 1;
+					}
+					var charXCanvas = 0;
+					var charWidth = characterWidths[textSize][set][characterSets[textSize][set].indexOf(text[i])];
+					for(var j=0; j<characterSets[textSize][set].indexOf(text[i]); j++){
+						charXCanvas += characterWidths[textSize][set][j];
+					}
+//					alert(textContexts + " - " +textContexts[textSize]);
+					textContext.putImageData(textContexts[textSize][set].getImageData(charXCanvas, 0, charWidth, characterHeights[textSize]), charXText, charYText);
+					charXText += charWidth;
+					
+					if(wrapWords && charXText > w){
+						while(text[i] != " "){
+							var set = -1;
+							for(var j=0; j<characterSets[textSize].length; j++){
+								if(characterSets[textSize][j].indexOf(text[i]) > -1){
+									set = j;
+									break;
+								}
+							}
+							if(set == -1){
+								text = text.substr(0, i) + "?" + text.substr(i+1);
+								set = textSize == 0 ? 3 : 1;
+							}
+
+							charXText -= characterWidths[textSize][set][characterSets[textSize][set].indexOf(text[i])];
+//							alert("removing " + characterWidths[textSize][set] + " - " + characterWidths[textSize][set][0]);
+							i--;
+						}
+//						alert(w+" - "+charXText);
+						textContext.clearRect(charXText, charYText, w-charXText, characterHeights[textSize]);
+						charYText += characterHeights[textSize] + 4;
+						charXText = 0;
+					}
+				}
+				
+				var i_text = new Image();
+				i_text.src = textCanvas.toDataURL("image/png");
+				i_text.onload = function(img){
+					x = centerX ? Math.round(x - charXText*0.5) : x;
+					y = centerY ? Math.round(y - characterHeights[textSize]*0.5) : y;
+					gctx.drawImage(i_text,x,y);
+//					ctx.drawImage(gctx.canvas, 0, 0);
+					if(gctx == ctx_image){ //ugly exception. =(
+						ctx.drawImage(c_image, 0, 0, renderSizes[context.zoomLevel][0], renderSizes[context.zoomLevel][1]);
+					}
+					else if(callback){
+						callback();
+					}
+					else{
+						gctx.drawToContext(ctx, true);
+					}
+				};
+			}
+			
+			function updateSelector(){
+				ctx.clearRect(c_selector.x, c_selector.y, c_selector.width, c_selector.height);
+				ctx_selector.clearRect(0, 0, c_selector.width, c_selector.height);
+				
+				ctx_selector.drawRoundedRect(sectionLineWidth, sectionLineWidth, c_selector.width-sectionLineWidth*2, sectionLineWidth+63, 6,
+											 sectionFill, sectionStroke, sectionLineWidth);
+											 
+				ctx_selector.drawRoundedRect(sectionLineWidth, sectionLineWidth+66, c_selector.width-sectionLineWidth*2,
+											 c_selector.height-sectionLineWidth*2-90, 6, sectionFill, sectionStroke, sectionLineWidth);
+				
+				switch(context.sub){
+					case 'trainer':	var pathBase = "characters/trainers/"+(context.main == 'self' ? "back" : "front")+"/";
+									var path;
+									var char = context.main == 'self' ? 0 : 1;
+									var prevFound = 0; //I.e.: Now in 'Friends', prevFound is then amount of trainers in 'Heroes'
+									
+									var start = 0;
+									var end = 0;
+									var offset = 0; //used in loop, added to i;
+									var maxIcons = iconRows[0]*iconColumns[0];
+									
+									if(context.trainerpage[char] == 0){
+										start = -1;
+										end = Math.min(maxIcons-1, totalTrainers[char]);
+									}
+									else{
+										start = 0;
+										offset = (maxIcons - 1) + maxIcons*(context.trainerpage[char]-1);
+//										alert(context.trainerpage[char] + " - "+offset);
+										end = Math.min(maxIcons, totalTrainers[char]-offset);
+									}
+									
+									for(var i=start; i<end; i++){ //set Path to point to correct folder (Heroes, Rivals, ...)
+										var n = i + offset;
+										var img = new Image();
+										
+										if(i > -1){
+											prevFound = 0;
+											for(var j=0; j<trainerPaths.length; j++){
+												if(n < numTrainers[char][j] + prevFound){
+													path = pathBase + trainerPaths[j] + "/";
+													break;
+												}
+												else{
+													prevFound += numTrainers[char][j];
+												}
+											}
+											var numTrainer = n - prevFound;
+											
+											var curGens = trainerGens[char][n]; //all available gens for trainer currently being placed
+											var latestGen = curGens[curGens.length-1];
+											img.src = path+numTrainer+"/"+latestGen+"/0.png";
+										}
+										else{
+											img.src = "GUI/del.png";
+										}
+										
+										img.onload = function(img, i, n, lg){
+											return function(){
+												createTrainerIcon(img, ctx_selector, i, false, n<maxIcons-1, 'selector', setTrainer(n, lg, 0, n!=-1), false);
+											}
+										}(img, i, n, latestGen);
+									}
+									break;
+					
+					case 'pokemon':	for(var i=0; i<iconColumns[1]*iconRows[1]; i++){
+										var n = i + iconColumns[1]*iconRows[1]*context.pokemonpage;
+										var img = new Image();
+										if(n==0){
+											img.src = "GUI/del.png";
+										}
+										else if(n < 494){
+											img.src = "pokemon/heartgold-soulsilver/"+n+".png";
+										}
+										else{
+											img.src = "pokemon/black-white/"+n+".png";
+										}
+										img.onload = (function(img, i, n){
+											return function(){
+												var x;
+												var y;
+												var size = 0;
+												
+												if(n < 494){
+													x = iconX + (i%iconColumns[1])*iconSizes[1];
+													y = iconY + Math.floor(i/iconColumns[1])*iconSizes[1];
+												}
+												else{
+													x = iconX + (i%iconColumns[1])*iconSizes[1] - (iconSizes[2] - iconSizes[1])*0.5;
+													y = iconY + Math.floor(i/iconColumns[1])*iconSizes[1] - (iconSizes[2] - iconSizes[1])*0.5;
+													size = 1;
+												}
+												
+//												ctx.clearRect(c_selector.x, c_selector.y, c_selector.width, c_selector.height);
+												ctx_selector.drawImage(img, x, y, iconSizes[1+size], iconSizes[1+size]);
+												ctx_selector.drawToContext(ctx, true);
+					//							ctx.strokeRect(x, y, iconSizes[1], iconSizes[1]);
+												bounds["pokemon"+i] = new Bounds(x+c_selector.x, y+c_selector.y, iconSizes[1], iconSizes[1], 'selector', setPokemon(n, 11, n!=0)); //11 = BW sprites
+											}
+										})(img, i, n);
+									}
+									break;
+					case 'background':	for(var i=-1; i<numBackgrounds; i++){
+											var i_bg = new Image();
+											i_bg.src = i == -1 ? "GUI/del.png" : "environment/backgrounds/"+i+"/"+backgrounds[i][0];
+											i_bg.onload = function(img, i){
+												return function(){
+													var x = boundsX = iconX + ((i+1)%iconColumns[3])*iconSizes[4][0];
+													var y = iconY + Math.floor((i+1)/iconColumns[3])*iconSizes[4][1];
+													var w = iconSizes[4][0];
+													
+													if(i == -1){
+														x += Math.round((iconSizes[4][0] - iconSizes[4][1])*0.5);
+														w = iconSizes[4][1];
+													}
+													
+													ctx_selector.drawImage(img, x, y, w, iconSizes[4][1]);
+													ctx_selector.drawToContext(ctx, true);
+													bounds["background"+i] = new Bounds(boundsX+c_selector.x, y+c_selector.y, iconSizes[4][0], iconSizes[4][1], 'selector', setBackground(i));
+												}
+											}(i_bg, i);
+										}
+										break;
+									
+					case 'base':	for(var key in bounds){
+										if(key.startsWith("base")){
+											delete bounds[key];
+										}
+									}
+									var start = 0;
+									var end = 0;
+									var offset = 0; //used in loop, added to i;
+									var maxIcons = iconRows[2]*iconColumns[2];
+									
+									if(context.basepage == 0){
+										start = -1;
+										end = Math.min(maxIcons-1, numBases);
+									}
+									else{
+										start = 0;
+										offset = (maxIcons - 1) + maxIcons*(context.basepage-1);
+//										alert(context.trainerpage[char] + " - "+offset);
+										end = Math.min(maxIcons, numBases-offset);
+									}
+									for(var i=start; i<end; i++){
+										var n = i+offset;
+										var i_base = new Image();
+										if(i == -1){
+											i_base.src = "GUI/del.png";
+										}
+										else{
+											if(baseInfo[n].indexOf("thumb.png") != -1){
+												i_base.src = "environment/bases/"+n+"/thumb.png"; //[thumb, 0, 1, 2]
+											}
+											else{
+												i_base.src = "environment/bases/"+n+"/1.png"; //no colors; [0, 1] ([front, back])
+											}
+										}
+										i_base.onload = function(img, i, n){
+											return function(){
+												var j = i == n ? 1 : 0;
+												var x = boundsX = iconX + ((i+j)%iconColumns[2])*iconSizes[3][0];
+												var y = iconY + Math.floor((i+j)/iconColumns[2])*iconSizes[3][1];
+												var w = iconSizes[3][0];
+												
+												if(n == -1){
+													x += Math.round((iconSizes[3][0] - iconSizes[3][1])*0.5);
+													w = iconSizes[3][1];
+												}
+												
+												ctx_selector.drawImage(img, x, y, w, iconSizes[3][1]);
+												ctx_selector.drawToContext(ctx, true);
+												bounds["base"+i] = new Bounds(boundsX+c_selector.x, y+c_selector.y, iconSizes[3][0], iconSizes[3][1], 'selector', setBase(n));
+											}
+										}(i_base, i, n);
+									}
+									break;
+				}
+				
+				for(var i=0; i<tabs.length; i++){
+					tabs[i].draw();
+				}
+				for(var i=0; i<pageButtonsSelector.length; i++){
+					pageButtonsSelector[i].draw();
+				}
+				
+				var buttonSet;
+				if(context.main == 'self' || context.main == 'opp'){
+					buttonSet = characterButtons;
+				}
+				else{
+					buttonSet = sceneButtons;
+				}
+				
+				for(var i=0; i<buttonSet.length; i++){
+					buttonSet[i].draw();
+				}
+				
+				var text;
+				if(context.sub == 'trainer'){
+					var char = context.main=='self' ? 0 : 1;
+					text = (context.trainerpage[char]+1)+" / "+(maxTrainerPage[char]+1);
+				}
+				else{
+					text = (context.pokemonpage+1)+" / 6";
+				}
+				setText(text, ctx_selector, c_selector.width*0.5, c_selector.height - 10, 100, 50, 2, true, true);
+			}
+			
+			var setBase = function(i){
+				return function(){
+					if(i == -1){
+						bases[0] = [];
+						bases[1] = [];
+						updateImage();
+					}
+					else{
+						if(baseInfo[i].indexOf("thumb.png") != -1){ //[thumb, 0, 1, 2]
+							basesReady = false;
+							var basesLoaded = 0;
+							for(var j=0; j<3; j++){
+								if(baseInfo[i].indexOf(j+".png") == -1){
+									bases[1][j] = undefined;
+									basesLoaded++; //technically incorrect
+									if(basesLoaded == 3){
+										basesReady = true;
+										updateImage();
+										updateEditor(0, 2);
+									}
+									continue;
+								}
+								var i_base = new Image();
+								i_base.src = "environment/bases/"+i+"/"+j+".png";
+								i_base.onload = function(img, j){
+									return function(){
+										bases[0] = [];
+										bases[1][j] = img;//new Sprite(img, 0, 0);
+										basesLoaded++;
+										if(basesLoaded == 3){
+											basesReady = true;
+											updateImage();
+											updateEditor(0, 2);
+										}
+									}
+								}(i_base, j);
+							}
+						}
+						else{ //[front, back]
+							var i_front = new Image();
+							i_front.src = "environment/bases/"+i+"/0.png";
+							i_front.onload = function(){
+								bases[0][0] = i_front;//new Sprite(i_front, -42, 117);
+								updateImage();
+							}
+							
+							var i_back = new Image();
+							i_back.src = "environment/bases/"+i+"/1.png";
+							i_back.onload = function(){
+								bases[0][1] = i_back;//new Sprite(i_back, 128, 56);
+								updateImage();
+								basesReady = true;
+								updateEditor(0, 2);
+							}
+						}
+					}
+				}
+			}
+			
+			function getSizes(img, max){
+				if(img.width > max || img.height > max){
+					var fac = img.width > img.height ? max/img.width : max/img.height;
+					return [Math.round(img.width*fac), Math.round(img.height*fac)];
+				}
+				return [img.width, img.height];
+			}
+			
+			function getSundialY(x){
+//				return (sundialBoundsY[1] - sundialBoundsY[0]) + (1-Math.pow((2*Math.max(0, Math.min(x, 1))-1), 2) * (sundialBoundsY[0] - sundialBoundsY[1]));
+				return sundialBoundsY[1] + (1-Math.pow((2*Math.max(0, Math.min(x, 1))-1), 2) * (sundialBoundsY[0] - sundialBoundsY[1]));
+			}
+			
+			function createTrainerIcon(img, gctx, i, showPlus, addPos, region, callback, update){ //addPos is for showing "back" button in front e.g.
+				var size = getSizes(img, 80);
+				var corrX = Math.round((80-size[0])*0.5);
+				var corrY = Math.round((80-size[1])*0.5);
+				
+				var extra = addPos?1:0;
+				var x = 0;
+				var y = 0;
+
+				if(region == 'selector'){
+					x += ((i+extra)%iconColumns[0])*80 + corrX + iconX;
+					y += Math.floor((i+extra)/iconColumns[0])*80 + corrY + iconY;
+				}
+				else{
+					x += ((i+extra)%editorColumns[0])*80 + corrX + editorX;
+					y += Math.floor((i+extra)/editorColumns[0])*80 + corrY + editorY;
+				}				
+				gctx.drawImage(img, x, y, size[0], size[1]);
+//				gctx.strokeRect(x-corrX, y-corrY, 80, 80);
+				gctx.drawToContext(ctx, true);
+//				alert(update);
+				var boundsName = region == 'selector' ? "trainer" : "editor";
+				if(update != undefined){
+					bounds[boundsName+i] = new Bounds(x+gctx.canvas.x-corrX, y+gctx.canvas.y-corrY, 80, 80, region, callback, update);
+				}
+				else{
+					bounds[boundsName+i] = new Bounds(x+gctx.canvas.x-corrX, y+gctx.canvas.y-corrY, 80, 80, region, callback);
+				}
+				
+				if(showPlus){
+					var i_plus = new Image();
+		    		i_plus.src = "GUI/plus.png";
+		    		i_plus.onload = function(){
+		    			ctx_editor.drawImage(i_plus, Math.round(x+80-(80-img.width)*0.5)-i_plus.width, y-corrY);
+		    			ctx_editor.drawToContext(ctx, true);
+		    		}
+				}
+			}
+			
+			function updateEditor(numEntity, updateSection, content, setMaxEditorPage, resetEditorPage){ //updateSection = 0: buttons only, 1: content only, 2: both, 3: top half only (sundial)
+																										 //content = 'gens'/'frames'
+				var clearHeight = 50;
+				
+				if(updateSection == 0){
+					ctx.clearRect(editorX + c_editor.x, editorY + c_editor.y, c_editor.width, clearHeight);
+					ctx_editor.clearRect(0, 0, c_editor.width, clearHeight);
+					
+					for(var i=0; i<genderButtons.length; i++){
+						genderButtons[i].draw();
+					}
+					shinyButton.draw();
+					return;
+				}
+				else if(updateSection == 1){
+					ctx.clearRect(editorX + c_editor.x, editorY + c_editor.y + clearHeight, c_editor.width, c_editor.height - clearHeight);
+					ctx_editor.clearRect(0, clearHeight, c_editor.width, c_editor.height - clearHeight);
+				}
+				else if(updateSection == 2){
+					ctx.clearRect(c_editor.x, c_editor.y, c_editor.width, c_editor.height);
+					ctx_editor.clearRect(0, 0, c_editor.width, c_editor.height);
+					
+					if(context.sub == 'pokemon'){
+						for(var i=0; i<genderButtons.length; i++){
+							genderButtons[i].draw();
+						}
+						shinyButton.draw();
+					}
+				}
+				else if(updateSection == 3){
+					ctx.clearRect(c_editor.x, c_editor.y, c_editor.width*0.6, c_editor.height*0.6);
+					ctx_editor.clearRect(0, 0, c_editor.width*0.6, c_editor.height*0.6);
+				}
+				
+				if(resetEditorPage){ // 'manual override'; used for entering 'frames' content from page 2+.
+					context.editorpage = 0;
+				}
+				
+				for(var key in bounds){
+					if(key.startsWith("editor")){
+						delete bounds[key];
+					}
+				}
+				
+				ctx_editor.drawRoundedRect(sectionLineWidth, sectionLineWidth+50, c_editor.width-8, c_editor.height-80, 6, sectionFill, sectionStroke, sectionLineWidth);
+				
+				if(context.main == 'scene'){
+					var lineLength = 0.02;
+					ctx_editor.strokeStyle = "rgba(255, 255, 255, 0.5)";
+					for(var i=0; i<=1; i += 0.04){
+						var x = [sundialBoundsX[0] + i*(sundialBoundsX[1]-sundialBoundsX[0]), sundialBoundsX[0] + (i+lineLength)*(sundialBoundsX[1]-sundialBoundsX[0])];
+						var y = [getSundialY(i), getSundialY(i+lineLength)];
+						ctx_editor.beginPath();
+						ctx_editor.moveTo(x[0]+24,y[0]+24);
+						ctx_editor.lineTo(x[1]+24, y[1]+24);
+						ctx_editor.stroke();
+					}
+					
+					if(i_sundial){
+						var x = Math.max(sundialBoundsX[0], Math.min(sundialBoundsX[0] + context.time*(sundialBoundsX[1]-sundialBoundsX[0]), sundialBoundsX[1]));
+						var y = getSundialY(context.time);
+						ctx_editor.drawImage(i_sundial, Math.round(x), Math.round(y));
+					}
+					else{
+						i_sundial = new Image();
+						i_sundial.src = "GUI/sundial_day.png";
+						i_sundial.onload = function(){
+//							sundialBoundsX[1] -= i_sundial.width;
+							ctx_editor.drawImage(i_sundial, sundialBoundsX[0], getSundialY(sundialBoundsX[0])); //fixes 1st-use rounding-error hickup
+							ctx_editor.drawToContext(ctx, true);
+						}
+					}
+					
+					var elementReady;
+					var elements;
+					
+					switch(context.sub){
+						case 'background':	elementReady = backgroundReady;
+											elements = background;
+											break;
+						case 'base':		elementReady = basesReady;
+											elements = bases[0].length > 0 ? bases[0] : bases[1];
+											break;
+					}
+					
+					if(elementReady){
+						var y = 170;
+						
+						if(elements == bases[0] || elements.length == 1){
+							var x = Math.round(c_editor.width*0.5 - elements[1].width*0.5);
+							ctx_editor.drawImage(elements[1], x, y, elements[1].width, elements[1].height);
+							bounds["editor"+i] = new Bounds(c_editor.x+x, c_editor.y+y, elements[1].width, elements[1].height, 'editor', setTime(1));
+						}
+						else{
+							for(var i=0; i<3; i++){
+								if(elements[i]){
+									var w = elements[i].width*0.285;
+									var h = elements[i].height*0.285;
+									var x = 10+(w+5)*i;
+									
+									if(elements[i]){
+										ctx_editor.drawImage(elements[i], x, y, w, h);
+									}
+									bounds["editor"+i] = new Bounds(c_editor.x+x, c_editor.y+y, w, h, 'editor', setTime(i));
+								}
+							}
+						}
+					}
+					
+					ctx_editor.drawToContext(ctx, true);
+					return;
+				}
+				
+				var spritesFound = 0;
+				
+				switch(context.sub){
+					case 'trainer':		if(bounds['setEditorMale']){
+											bounds['setEditorMale'].ac = false;
+											bounds['setEditorFemale'].ac = false;
+											bounds['setEditorShiny'].ac = false;
+										}
+										
+										context.editorstate = content;
+										
+										if(numEntity == undefined){
+											numEntity = context.trainer;
+										}
+										
+										var path = "characters/trainers/"+(context.main == 'self' ? "back" : "front")+"/";
+										var char = context.main == 'self' ? 0 : 1;
+										
+										if(numEntity == undefined){
+											numEntity = context.trainer[char];
+										}
+										
+										var prevTrainers = 0;
+										if(numEntity > -1){
+											for(var i=0; i<trainerPaths.length; i++){ //i < ["Heroes", ...]
+//												alert(i+": "+numEntity+" < "+numTrainers[char][i]+" + "+prevTrainers);
+												if(numEntity < numTrainers[char][i] + prevTrainers){
+													path += trainerPaths[i] + "/" + (numEntity - prevTrainers); //path is now .../front/Heroes/1 e.g.
+													break;
+												}
+												else{
+													prevTrainers += numTrainers[char][i];
+												}
+											}
+										}
+										
+										if(content == 'gens'){
+											var numIconsMax = editorRows[0]*editorColumns[0];
+											var offset = numIconsMax + numIconsMax*(context.editorpage-1);
+											var end = Math.min(numIconsMax, trainerGens[char][numEntity].length-offset);
+											
+											for(var i=0; i<end; i++){
+												var n = i+offset;
+												var img = new Image();
+												img.src = path+"/"+trainerGens[char][numEntity][n]+"/0.png";
+//												alert(path + " - "+img.src);
+												img.onload = (function(img, i, n, numEntity){
+													return function(){
+//														alert(numTrainerFrames[char][numEntity][i]);
+														if(numTrainerFrames[char][numEntity][n] > 1){
+															createTrainerIcon(img, ctx_editor, i, true, false, 'editor', new function(){return function(){updateEditor(numEntity, updateSection, 'frames', false, true);}}, setTrainer(numEntity, trainerGens[char][numEntity][n], 0, false, true));
+														}
+														else{
+															createTrainerIcon(img, ctx_editor, i, false, false, 'editor', setTrainer(numEntity, trainerGens[char][numEntity][n], 0, false, false));
+														}
+														
+													}
+												})(img, i, n, numEntity);
+											}
+										}
+										
+										else if(content == 'frames'){
+											var path = "characters/trainers/"+(context.main == 'self' ? "back" : "front")+"/";
+											var prevTrainers = 0;
+											for(var i=0; i<trainerPaths.length; i++){ //i < ["Heroes", ...]
+												if(numEntity < numTrainers[char][i] + prevTrainers){
+													path += trainerPaths[i] + "/" + (numEntity - prevTrainers); //path is now .../front/Heroes/1 e.g.
+													break;
+												}
+												else{
+													prevTrainers += numTrainers[char][i];
+												}
+											}
+											
+											var gen = trainerGens[char][numEntity].indexOf(context.trainerGen);
+											var start = 0;
+											var end = 0;
+											var offset = 0; //used in loop, added to i;
+											
+											if(context.editorpage == 0){
+												start = -1;
+												end = Math.min(editorRows[0]*editorColumns[0]-1, numTrainerFrames[char][numEntity][gen]);
+											}
+											else{
+												start = 0;
+												offset = 5 + 6*(context.editorpage-1);
+												end = Math.min(editorRows[0]*editorColumns[0], numTrainerFrames[char][numEntity][gen]-offset);
+											}
+											
+											for(var i=start; i<end; i++){
+												var img = new Image();
+												img.src = i == -1 ? "GUI/btn_back.png" : path+"/"+trainerGens[char][numEntity][gen]+"/"+(i+offset)+".png";
+												img.onload = (function(img, i, numEntity, offset){
+													return function(){
+														if(i == -1){
+															createTrainerIcon(img, ctx_editor, i, false, true, 'editor', new function(){return function(){updateEditor(numEntity, updateSection, 'gens', true)}});
+														}
+														else{
+															createTrainerIcon(img, ctx_editor, i, false, offset==0, 'editor', setTrainer(numEntity, trainerGens[char][numEntity][gen], i+offset, false, false));
+														}
+												    };
+												    req.send();
+												})(img, i, numEntity, offset);
+											}
+										}
+										
+										if(setMaxEditorPage){
+											context.maxeditorpage = Math.floor((trainerGens[char][numEntity].length-1)/(editorRows[0]*editorColumns[0]));
+										}
+										
+										break;
+										
+
+					
+					case 'pokemon':		if(bounds['setEditorMale']){
+											bounds['setEditorMale'].ac = true;
+											bounds['setEditorFemale'].ac = true;
+											bounds['setEditorShiny'].ac = true;
+										}
+										
+										context.maxeditorpage = 0;
+										
+										if(content == 'gens'){
+											for(var i=0; i<genPaths.length; i++){
+												var path = "pokemon/"+genPaths[i]+"/"+numEntity+".png";
+												var req = new XMLHttpRequest();
+											    req.open('GET', "fileExists.php?path="+path, false);
+											    req.onreadystatechange = function(){
+											    	if(req.responseText != 1){
+											    		return;
+											    	}
+											    	var img = new Image();
+													img.src = path;
+													img.onload = (function(img, i, numEntity, pos){
+														return function(){
+															var x;
+															var y;
+															var size = 0;
+															if(i < 11){
+																x = editorX + (pos%editorColumns[1])*iconSizes[1];
+																y = editorY + Math.floor(pos/editorColumns[1])*iconSizes[1];
+															}
+															else{
+																x = editorX + (pos%editorColumns[1])*iconSizes[1] - (iconSizes[2] - iconSizes[1])*0.5;
+																y = editorY + Math.floor(pos/editorColumns[1])*iconSizes[1] - (iconSizes[2] - iconSizes[1])*0.5;
+																size = 1;
+															}
+															
+	//														ctx.clearRect(editorX + c_editor.x, editorY + c_editor.y, c_editor.width, c_editor.height);
+															ctx_editor.drawImage(img, x, y, iconSizes[1+size], iconSizes[1+size]);
+															ctx_editor.drawToContext(ctx, true);
+								//							ctx.strokeRect(x, y, iconSizes[1], iconSizes[1]);
+															var hasForms = false;
+															
+															if(numEntity in formPokemon){
+																for(var genString in formPokemon[numEntity]){
+																	if(genString == "-1"){
+																		hasForms = true;
+																		break;
+																	}
+																	else{
+																		var genPlusString = genString.split("+");
+																		if(genPlusString.length > 1){ //genString is "6+" e.g.
+																			if(i >= parseInt(genPlusString[0])){
+																				hasForms = true;
+																				break;
+																			}
+																		}
+																		else{ //genString is "3,4,5" e.g.
+																			var gens = genPlusString[0].split(",");
+																			for(var j=0; j<gens.length; j++){
+																				if(i == parseInt(gens[j])){
+																					hasForms = true;
+																					break;
+																				}
+																			}
+																		}
+																	}
+																}
+															}
+															
+															if(hasForms){
+																bounds["editor"+i] = new Bounds(x+c_editor.x, y+c_editor.y, iconSizes[1], iconSizes[1], 'editor', new function(){return function(){updateEditor(numEntity, updateSection, 'frames', false);}}, setPokemon(numEntity, i, false)); //setMaxEditorPage = false???
+																
+																
+																var i_plus = new Image();
+																i_plus.src = "GUI/plus.png";
+													    		i_plus.onload = function(){
+													    			ctx_editor.drawImage(i_plus, x+40-i_plus.width, y);
+													    			ctx_editor.drawToContext(ctx, true);
+													    		}
+															}
+															else{
+																bounds["editor"+i] = new Bounds(x+c_editor.x, y+c_editor.y, iconSizes[1], iconSizes[1], 'editor', setPokemon(numEntity, i, false));
+															}
+														}
+													})(img, i, numEntity, spritesFound);
+											    	spritesFound++;
+											    };
+											    req.send();
+											}
+										}
+										else if(content == 'frames'){ //'forms'
+											if(!numEntity){ //currently this can only happen for Unown due to needing multiple pages.. Pesky Unowns.
+												numEntity = 201;
+											}
+											
+											if(numEntity == 201){
+												context.maxeditorpage = 1;
+											}
+											
+											var forms;
+											for(var genString in formPokemon[numEntity]){
+												if(genString == "-1"){
+													forms = formPokemon[numEntity][genString];
+													break;
+												}
+												else{
+													var genPlusString = genString.split("+");
+													if(genPlusString.length > 1){ //genString is "6+" e.g.
+														if(context.pokemonGen >= parseInt(genPlusString[0])){
+															forms = formPokemon[numEntity][genString];
+															break;
+														}
+													}
+													else{ //genString is "3,4,5" e.g.
+														var gens = genPlusString[0].split(",");
+														for(var j=0; j<gens.length; j++){
+															if(context.pokemonGen == parseInt(gens[j])){
+																forms = formPokemon[numEntity][genString];
+																break;
+															}
+														}
+													}
+												}
+											}
+											
+											
+											var offsetPos = 0;
+											var offsetNum = 0;
+											var end = Math.min(forms.length, editorRows[1] * editorColumns[1] - 1);
+											
+											if(context.editorpage == 0){
+												var i_back = new Image();
+												i_back.src = "GUI/btn_back.png";
+												i_back.onload = function(){
+													ctx_editor.drawImage(i_back, editorX, editorY, iconSizes[1], iconSizes[1]);
+													ctx_editor.drawToContext(ctx, true);
+												}
+												bounds["editor0"] = new Bounds(editorX+c_editor.x, editorY+c_editor.y, iconSizes[1], iconSizes[1], 'editor', new function(){return function(){updateEditor(numEntity, updateSection, 'gens', true);}});
+												
+												offsetPos = 1;
+											}
+											else{
+												offsetNum = editorRows[1] * editorColumns[1] * context.editorpage;
+												end = forms.length - editorRows[1]*editorColumns[1];
+											}
+											
+											for(var i=0; i<end; i++){
+												var i_form = new Image();
+												i_form.src = "pokemon/"+genPaths[context.pokemonGen]+"/"+numEntity+forms[i+offsetNum]+".png";
+												i_form.onload = function(img, i, offsetPos, offsetNum){
+													return function(){
+														var x = editorX + ((i+offsetPos)%editorColumns[1])*iconSizes[1];
+														var y = editorY + Math.floor((i+offsetPos)/editorColumns[1])*iconSizes[1];
+														ctx_editor.drawImage(img, x, y, iconSizes[1], iconSizes[1]);
+														ctx_editor.drawToContext(ctx, true);
+														bounds["editor"+(i+offsetPos)] = new Bounds(x+c_editor.x, y+c_editor.y, iconSizes[1], iconSizes[1], 'editor', setPokemon(numEntity+forms[i+offsetNum], context.pokemonGen, false));
+													}
+												}(i_form, i, offsetPos, offsetNum);
+											}
+										}
+										break;
+				}
+				for(var i=0; i<pageButtonsEditor.length; i++){
+					pageButtonsEditor[i].draw();
+				}
+				
+				setText((context.editorpage+1)+" / "+(context.maxeditorpage+1), ctx_editor, c_editor.width*0.5, c_editor.height - 10, 100, 50, 2, true, true);
+			}
+			
+			var openPopup = function(content){
+				return function(){
+					var oldCanvasState = ctx.getImageData(0, 0, c.width, c.height);
+					var oldSub = context.sub;
+					
+					ctx_popup.clearRect(0, 0, c_popup.width, c_popup.height);
+					ctx_popup.drawRoundedRect(sectionLineWidth, sectionLineWidth+15, c_popup.width-15-sectionLineWidth-3,
+											  c_popup.height-15-sectionLineWidth-3, 6, "rgba(255, 255, 255, 0.9)", sectionStroke, sectionLineWidth);
+					
+					context.popupOpen = true;
+					context.sub = 'popup';
+					
+					context.popupContentLoaded = 0;
+					context.popupContentCount = 1;
+					
+					switch(content){
+						case 'help':	context.popupContentCount = 2;
+										setText("Test lorem Ipsum adamamamamama nononono hajaaja", ctx_popup, 20, 40, 500, 100, 0, false, false, true,  updatePopup);
+										break;
+						case 'credits':	context.popupContentCount = 3;
+										setText("Credits", ctx_popup, 20, 40, 100, 50, 1, false, false, false, updatePopup);
+										setText("There are a couple of people I would like to thank.\n\nFirst and foremost, a major thank you goes out to veekun.com for making all Pokemon sprites freely and easily available. Major bonus points for the fantastic file structures, naming and ordening of the sprites as well. It made this project 100x more pleasant to work on!\n\nI would also like to extend my thanks to the folks over at spriters-resource.com and pokecheck.org for offering all other sprites I used, such as those of trainers and items. I would specifically like to credit Tsuka, Gridiron, Lemon, Dragoon, Redblueyellow, Witw, KlNothinComin and Xtreme1992 for their work and efforts.\n\nNot to be forgotten are reddit users Cntrldude and those who commented on the thread that inspired this whole shebang.", ctx_popup, 20, 100, 600, 300, 0, false, false, true, updatePopup);
+										break;
+					}
+					
+					var i_close = new Image();
+					i_close.src = "GUI/btn_close.png";
+					i_close.onload = function(){
+						ctx_popup.drawImage(i_close, c_popup.width-50, 0);
+						bounds["popupClose"] = new Bounds(c_popup.x+c_popup.width-50, c_popup.y, 50, 50, 'popup', closePopup(oldCanvasState, oldSub));
+						updatePopup();
+					}
+				}
+			}
+			
+			var closePopup = function(oldCanvasState, oldSub){
+				return function(){
+					context.popupOpen = false;
+					context.sub = oldSub;
+					ctx.clearRect(0, 0, c.width, c.height);
+					ctx.putImageData(oldCanvasState, 0, 0);
+				}
+			}
+			
+			var updatePopup = function(){
+				context.popupContentLoaded++;
+				if(context.popupContentLoaded == context.popupContentCount){
+					ctx_popup.drawToContext(ctx, false);
+				}
+			}
+			
+			var setContext = function(cat, val, pokemonNum){
+				return function(){
+					switch(cat){
+						case 'main':			if(context.main != val && val == 'scene'){
+													context.main = val;
+													for(var i=0; i<characterButtons.length; i++){
+														bounds[characterButtons[i].name].ac = false;
+													}
+													for(var i=0; i<sceneButtons.length; i++){
+														bounds[sceneButtons[i].name].ac = true;
+														if(i == 0){
+															sceneButtons[i].activate();
+														}
+														else{
+															sceneButtons[i].deactivate();
+														}
+													}
+													context.sub = 'background';
+													updateSelector();
+													updateEditor(0, 2);
+												}
+												else if(context.main != val){
+//													if(context.sub == 'trainer'){
+//														updateSelector();
+//													}
+													if(context.main == 'scene'){ //coming from 'scene' tab
+														context.sub = 'trainer';
+													}
+													for(var i=0; i<sceneButtons.length; i++){
+														bounds[sceneButtons[i].name].ac = false;
+													}
+													for(var i=0; i<characterButtons.length; i++){
+														bounds[characterButtons[i].name].ac = true;
+														if(i == 0){
+															characterButtons[i].activate();
+														}
+														else{
+															characterButtons[i].deactivate();
+														}
+													}
+													context.main = val;
+													updateSelector();
+												}
+												break;
+						case 'sub':				var oldSub = context.sub;
+												context.sub = val;
+												if(oldSub != context.sub){
+													updateSelector();
+												}
+												break;
+						case 'selectorpage':	if(context.sub=='trainer'){
+													var char = context.main=='self' ? 0 : 1;
+													var oldPage = context.trainerpage[char];
+													context.trainerpage[char] = Math.max(0, Math.min(context.trainerpage[char]+val, maxTrainerPage[char]));
+													if(oldPage != context.trainerpage[char]){
+														updateSelector();
+													}
+												}
+												else if(context.sub == 'base'){
+													var oldPage = context.basepage;
+													context.basepage = Math.max(0, Math.min(context.basepage+val, 3));
+													if(oldPage != context.basepage){
+														updateSelector();
+													}
+												}
+												else if(context.sub == 'pokemon'){
+													var oldPage = context.pokemonpage;
+													context.pokemonpage = Math.max(0, Math.min(context.pokemonpage+val, 5));
+													if(oldPage != context.pokemonpage){
+														updateSelector();
+													}
+												}
+												break;
+						case 'editorpage':		var char = context.main=='self' ? 0 : 1;
+//												if(context.trainer != -1){
+													var oldPage = context.editorpage;
+													context.editorpage = Math.max(0, Math.min(context.editorpage+val, context.maxeditorpage));
+													if(oldPage != context.editorpage){
+														updateEditor(undefined, 1, context.editorstate, false);
+													}
+//												}
+												break;
+						case 'zoom':			var oldZoom = context.zoomLevel;
+												context.zoomLevel = val;
+												if(oldZoom != context.zoomLevel){
+	//												ctx.clearRect(0, 0, renderSizes[oldZoom][0], renderSizes[oldZoom][1]);
+													ctx.clearRect(0, 0, 2000, 1000);
+													if(context.zoomLevel == 2){
+														ctx.canvas.width = 1350;
+														ctx.canvas.height = 600;
+													}
+													else{
+														ctx.canvas.width = 1200;
+														ctx.canvas.height = 570;
+													}
+													var offsetX = renderSizes[context.zoomLevel][0] - renderSizes[oldZoom][0];
+													var offsetY = renderSizes[context.zoomLevel][1] - renderSizes[oldZoom][1];
+													
+													c_selector.x += offsetX;
+													c_editor.x += offsetX;
+													c_displayPanel.y += offsetY;
+													
+													ctx_selector.drawToContext(ctx, true);
+													ctx_editor.drawToContext(ctx, true);
+													ctx_displayPanel.drawToContext(ctx, true);
+													
+													for(var key in bounds){
+														if(bounds[key].section == 'zoom'){
+															bounds[key].y += offsetY;
+														}
+														else{
+															bounds[key].x += offsetX;
+														}
+													}
+													
+													var textY = parseInt(document.getElementById('BattleTextDiv').style.top);
+													document.getElementById('BattleTextDiv').style.top = (textY + offsetY)+"px";
+													
+	//												alert(document.getElementById('battleText').style.width);
+													var textBoxW = parseInt(document.getElementById('battleText').style.width);
+													document.getElementById('battleText').style.width = (textBoxW + offsetX)+"px";
+													
+	//												var fs = "12px";
+	//												if(context.zoomLevel == 1){
+	//													fs = "18px";
+	//												}
+	//												else if(context.zoomLevel == 2){
+	//													fs = "24px";
+	//												}
+	//												document.getElementById('battleText').style.fontSize = fs;
+													
+													updateImage();
+												}
+												break;
+					}
+					
+					if(pokemonNum != undefined){
+						context.pokemonNum = pokemonNum;
+					}
+				}
+			};
+			
+			var saveImage = function(method){
+				return function(){
+					switch(method){
+						case 'file':	//form = document.getElementById('saveForm');
+//										form.elements[0].value = encodeURI(c_image.toDataURL());
+//										form.submit();
+										
+										var form = document.createElement('form');
+										form.method = 'post';
+										form.action="saveImage.php";
+										form.target="_blank";
+										
+										var p = document.createElement('input')
+										p.type = 'hidden';
+										p.name = "path";
+										p.value = encodeURI(c_image.toDataURL());
+										
+										document.body.appendChild(form);
+										form.appendChild(p);
+										form.submit();
+										
+										break;
+					}
+				}
+			}
+			
+			var context = {main:'self', sub:'trainer', pokemonNum:0, pokemonpage:0, trainerpage:[0,0], basepage:0, editorpage:0, maxeditorpage:0,
+						   editorstate:"", trainer:-1, trainerGen:"", pokemon:-1, pokemonGen:"", environment:0, time:0, zoomLevel:0, popupOpen:false,
+						   popupContentLoaded:0, popupContentCount:0};
+			
+			var sectionLineWidth = 3;
+			var sectionFill = "rgba(255, 255, 255, 0.5)";
+			var sectionStroke = "rgba(0, 0, 0, 1)";
+			
+			var setBtnX = sectionLineWidth+10;//600;
+			var setBtnY = sectionLineWidth+6;//10;
+			var setBtnSh = 105; //spacing horizontal
+			var setBtnSv = 30; //spacing vertical
+			
+			var zoomBtnX = 0;
+			var zoomBtnY = 0;//250;
+			var zoomBtnSh = 75; //spacing horizontal
+			
+			var saveBtnX = 0;
+			var saveBtnY = 50;//250;
+			var saveBtnSv = 45; //spacing horizontal
+			
+			var genderBtnX = 0;
+			var shinyBtnX = 100;
+			var characteristicsBtnY = 10;
+						
+//			var bounds = {"setTrainerSelf": new Bounds(400, 50, 100, 50, drawPokemon, 492),
+//							};
+			var bounds = {};
+			var tabs = [];
+			var sceneButtons = [];
+			var characterButtons = [];
+			var zoomButtons = [];
+			var sidebarButtons = [];
+			var pageButtonsSelector = [];
+			var pageButtonsEditor = [];
+			var genderButtons = [];
+			var shinyButton;
+//			var trainerSelf, pokemonSelf1, pokemonSelf2, pokemonSelf3, trainerOpp, pokemonOpp1, pokemonOpp2, pokemonOpp3; //sprites
+			var trainers = [];
+			var pokemon = [[], []]; //[[self1, self2, self3], [opp1, opp2, opp3]]
+			var background = [];
+			var bases = [[], []]; //[[front, back], [col0, col1, col2]] //[front back] are separate sprites; colored ones are all-in-one.
+			var textBoxes = [];
+			var genPaths = ["red-green", "red-blue", "yellow", "gold", "silver", "crystal", "ruby-sapphire", //"emerald",
+							"firered-leafgreen", "diamond-pearl", "platinum", "heartgold-soulsilver", "black-white"];
+			
+			var genBoxes = ["GUI/genbox_RG.png", "GUI/genbox_RB.png", "GUI/genbox_Y.png", "GUI/genbox_G.png",
+							"GUI/genbox_S.png", "GUI/genbox_C.png", "GUI/genbox_RSE.png", "GUI/genbox_FRLG.png",
+							"GUI/genbox_DP.png", "GUI/genbox_P.png", "GUI/genbox_HGSS.png", "GUI/genbox_BW.png"];
+			
+			//																					  V "Professors"
+			var trainerPaths = ["Heroes", "Friends", "Rivals", "Leaders", "E4", "Teams", "Allies", "Support", "Pokestar", "Trainers"];
+			var trainerGenPaths = ["rgb", "yellow", "gsc", "rs", "emerald", "rse", "frlg", "dp", "dp2", "platinum", "hgss", "bw", "bw2", "bw22"];
+			
+//			var unownTypes = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", 
+//							  "z", "question", "exclamation"];
+			
+			//var formPokemon = [172, 201, 351, 386, 412, 413, 421, 422, 423, 479, 487, 492, 550, 555, 585, 586, 641, 642, 645, 646, 647, 648];
+			// ... = {numPokemon:{"availableGens*]:[corresponding available suffixes]}}  *as string, N+ is gen N and upwards, -1 is always available
+			var formPokemon = {172:{"10": ["", "-spiky-eared"]},
+							   201:{"3,4,5": ["-a", "-b", "-c", "-d", "-e", "-f", "-g", "-h", "-i", "-j", "-k", "-l", "-m", "-n", "-o", "-p", "-q", "-r",
+							   				  "-s", "-t", "-u", "-v", "-w", "-x", "-y", "-z"],
+							   		"5+": ["-a", "-b", "-c", "-d", "-e", "-f", "-g", "-h", "-i", "-j", "-k", "-l", "-m", "-n", "-o", "-p", "-q", "-r",
+							   			   "-s", "-t", "-u", "-v", "-w", "-x", "-y", "-z", "-question", "-exclamation"]},
+							   351:{"-1": ["", "-sunny", "-rainy", "-snowy"]},
+							   386:{"6": ["-normal", "-speed"],
+							 		"7": ["-attack", "-defense"],
+							 		"8+": ["-normal", "-speed", "-attack", "-defense"]},
+							   412:{"-1": ["-plant", "-sandy", "-trash"]},
+							   413:{"-1": ["-plant", "-sandy", "-trash"]},
+							   421:{"-1": ["-overcast", "-sunshine"]},
+							   422:{"-1": ["-west", "-east"]},
+							   423:{"-1": ["-west", "-east"]},
+							   479:{"9+": ["", "-fan", "-frost", "-heat", "-mow", "-wash"]},
+							   487:{"9+": ["-altered", "-origin"]},
+							   492:{"9+": ["-land", "-sky"]},
+							   493:{"-1": ["-normal", "-electric", "-grass", "-bug", "-flying", "-ice", "-water", "-ghost", "-dragon", "-poison",
+							   			   "-psychic", "-fire", "-fighting", "-ground", "-rock", "-steel", "-dark"]},
+							   550:{"-1": ["-red-striped", "-blue-striped"]},
+							   555:{"-1": ["-standard", "-zen"]},
+							   585:{"-1": ["-spring", "-summer", "-autumn", "-winter"]},
+							   586:{"-1": ["-spring", "-summer", "-autumn", "-winter"]},
+							   641:{"-1": ["-incarnate", "-therian"]},
+							   642:{"-1": ["-incarnate", "-therian"]},
+							   645:{"-1": ["-incarnate", "-therian"]},
+							   646:{"-1": ["", "-white", "-black"]},
+							   647:{"-1": ["-ordinary", "-resolute"]},
+							   648:{"-1": ["-aria", "-pirouette"]},
+							   649:{"-1": ["", "-burn", "-shock", "-douse", "-chill"]}};
+			
+			var renderSizes = [[256, 190], [384, 285], [512, 380]];
+//			var smallPokemon = [1,2,4,5,7,8,10,11,13,14,16,19,20,21,23,27,28,29,32,35,37,39,43,44,46];
+			
+			var c = document.getElementById("canvas");
+			var ctx = c.getContext("2d");
+			
+			var spriteSize = 80;
+			
+			var posPokemon = [[[[32, 152]],  [[0, 152], [40, 164]],  [[0, 152], [40, 158], [86, 164]]],
+							  [[[40, 0]],  [[20, 0], [60, 0]],  [[0, 0], [40, 0], [80, 0]]],
+							  [[[150, 10]],  [[136, 4], [175, 15]],  [[126, 4], [145, 15], [185, 14]]]];
+							  //[[single], [double1, double2], [triple1, triple2, triple3]]	x3 (self gen1-12, self gen13, opp) char, singdoubtrip, pos, x/y
+			var trainerPos = [[0, 64], [243, 88]];//[185, 88]];
+			
+//			var iconX = sectionLineWidth*2;//600;
+			var iconY = sectionLineWidth*2 + 66;
+			var iconColumns = [5, 10, 3, 3]; //[trainers, pokemon, bases]
+			var iconRows = [5, 11, 7, 6];
+			var iconSizes = [80, 40, 48, [128, 64], [128, 72]]; //[trainers, pokemon 1-493, pokemon 494+, [bg_base w, bg_base h], [bg w, bg h]]
+			var pageOffsetX = [140, 80];
+			
+			var editorX = sectionLineWidth*2;//300;
+			var editorY = sectionLineWidth*2 + 50;//70;
+			var editorColumns = [3, 6];
+			var editorRows = [2, 4];
+			
+			var backgroundReady = false;
+			var numBackgrounds = 0;
+			var backgrounds;
+			
+			var basesReady = false;
+			var numBases = 0;
+			var baseInfo = [];
+						
+//			var i_baseF = new Image();
+//			i_baseF.src = "environment/bases/0/0.png";
+//			i_baseF.onload = function(){
+//				bases[0] = new Sprite(i_baseF, -42, 117);
+//				updateImage();
+//			}
+//			
+//			var i_baseB = new Image();
+//			i_baseB.src = "environment/bases/0/1.png";
+//			i_baseB.onload = function(){
+//				bases[1] = new Sprite(i_baseB, 128, 56);
+//				updateImage();
+//			}
+			
+			var c_image = document.createElement('canvas');
+			c_image.width = 256;
+			c_image.height = 190;
+			c_image.globalCompositeOperation = "source-atop";
+			var ctx_image = c_image.getContext('2d');
+			
+			var c_selector = document.createElement('canvas');
+			c_selector.x = 600;
+			c_selector.y = 10;
+			c_selector.width = 440;
+			c_selector.height = 560;
+			var ctx_selector = c_selector.getContext('2d');
+			
+			var c_editor = document.createElement('canvas');
+			c_editor.x = 300;
+			c_editor.y = 70;
+			c_editor.width = 253;
+			c_editor.height = 280; //was 302
+			var ctx_editor = c_editor.getContext('2d');
+
+			var c_displayPanel = document.createElement('canvas');
+			c_displayPanel.x = 0;
+			c_displayPanel.y = 250;
+			c_displayPanel.width = 255;
+			c_displayPanel.height = 140;
+			var ctx_displayPanel = c_displayPanel.getContext('2d');
+						
+			var c_textBoxes = document.createElement('canvas');
+			var ctx_textBoxes = c_textBoxes.getContext('2d');
+			var i_textBoxes = new Image();
+			i_textBoxes.src = "GUI/textBoxes_HGSS.png";
+			i_textBoxes.onload = function(){
+				c_textBoxes.width = i_textBoxes.width;
+				c_textBoxes.height = i_textBoxes.height;
+				ctx_textBoxes.drawImage(i_textBoxes, 0, 0);
+				textBoxes[0] = ctx_textBoxes.getImageData(0, 0, 256, 46);
+				updateImage();
+			};
+			
+			var c_sidebar = document.createElement('canvas');
+			c_sidebar.x = 1060;
+			c_sidebar.y = c_selector.y;
+			c_sidebar.width = 70;
+			c_sidebar.height = 110;
+			var ctx_sidebar = c_sidebar.getContext('2d');
+			
+			var c_popup = document.createElement('canvas');
+			c_popup.x = 280;
+			c_popup.y = 40;
+			c_popup.width = 650;
+			c_popup.height = 450;
+			var ctx_popup = c_popup.getContext('2d');
+			
+			var textCanvases = [[], [], []];
+			var textContexts = [[], [], []];
+			var textReady = false;
+			
+			ctx_sidebar.drawRoundedRect(sectionLineWidth, sectionLineWidth, c_sidebar.width-sectionLineWidth-3, c_sidebar.height-sectionLineWidth-3, 6, sectionFill, sectionStroke, sectionLineWidth);
+						
+			//sets = [[[smallSet1], [smallSet2], [...]], [[bigSet1], [bigSet2], [...]]]
+			var characterSets = [[["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"],
+							 	  ["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z"],
+							 	  ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+							 	  [".", ",", ":", ";", "~", "'", "/", "!", "?", "(", ")", "+", "-", "*", "÷", "=", "%", "@", "[", "]"]], //weird remaps
+							 	
+							 	[["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"],
+							 	  ["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z"]],
+							 		  
+							 	 [["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+							 	  [".", ",", ":", ";", "~", "'", "/", "!", "?", "(", ")", "+", "-", "*", "÷", "=", "%", "@", "[", "]"]]]; //weird remaps
+			
+			var characterWidths = [[[7,7,7,7,7,7,7,7,6,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,8,7],
+									[7,7,7,7,7,6,7,7,3,5,7,4,7,7,7,7,7,6,7,6,7,7,7,7,6,7],
+									[7,5,7,7,7,7,7,7,7,7],
+									[3,3,3,3,7,3,6,3,8,4,4,8,8,8,8,7,8,8,8,8]],
+									
+								   [[14,14,14,14,14,14,14,14,12,14,14,14,14,14,14,14,14,14,14,14,14,14,14,14,16,14],
+									[14,14,14,14,14,12,14,14,6,10,14,8,14,14,14,14,14,12,14,12,14,14,14,14,12,14]],
+										
+								   [[14,10,14,14,14,14,14,14,14,14],
+									[6,6,6,6,14,6,12,6,16,8,8,16,16,16,16,14,16,16,16,16]]];
+			
+			var characterHeights = [13, 26, 26];
+			
+			var iconX = (c_selector.width - iconSizes[1]*iconColumns[1]) * 0.5;
+			
+			var sidebarBtnSv = 45;
+			var sidebarBtnX = Math.round(c_sidebar.width*0.5-20); //20 = btn.width/2
+			var sidebarBtnY = Math.round(c_sidebar.height*0.5-sidebarBtnSv*0.5 - 20);
+			
+			var i_sundial;
+			var draggingSunDial = false;
+			var sundialBoundsX = [20, c_editor.width - 20 - 48]; // -48 = i_sundial.width; not loaded in yet at start
+			var sundialBoundsY = [40, 65];//[80, 150];
+			var sunDialOffset = [0, 0];
+			
+			ctx.clearRect(0, 0, c.width, c.height);
+			
+			pageButtonsSelector[0] = new Button("setNextPageSel", "GUI/next", c_selector.width*0.5 + pageOffsetX[0]*0.5, //20=width/2
+												iconY+iconRows[1]*iconSizes[1], false, ctx_selector, 'selector', setContext('selectorpage', 1));
+			pageButtonsSelector[1] = new Button("setPrevPageSel", "GUI/prev", c_selector.width*0.5 - pageOffsetX[0]*0.5 - 40,
+												iconY + iconRows[1]*iconSizes[1], false, ctx_selector, 'selector', setContext('selectorpage', -1));
+			
+			pageButtonsEditor[0] = new Button("setNextPageEd", "GUI/next", c_editor.width*0.5 + pageOffsetX[1]*0.5,
+											  c_editor.height - 48, false, ctx_editor, 'editor', setContext('editorpage', 1));
+			pageButtonsEditor[1] = new Button("setPrevPageEd", "GUI/prev", c_editor.width*0.5 - pageOffsetX[1]*0.5 - 40,
+											  c_editor.height - 48, false, ctx_editor, 'editor', setContext('editorpage', -1));
+			
+			new Button("setSaveImageFile", "GUI/btn_save", saveBtnX, saveBtnY, false, ctx_displayPanel, 'zoom', saveImage('file'));
+			new Button("setSaveImageMail", "GUI/btn_mail", saveBtnX, saveBtnY+saveBtnSv, false, ctx_displayPanel, 'zoom', saveImage('mail'));
+			
+			tabs[0] = new Button("setSelf", "GUI/tab_self", setBtnX, setBtnY, true, ctx_selector, 'selector', setContext('main', 'self'),
+										   updateUI('tabs', 0), true);
+			tabs[1] = new Button("setOpp", "GUI/tab_opponent", setBtnX+100, setBtnY, true, ctx_selector, 'selector', setContext('main', 'opp'),
+										   updateUI('tabs', 1));
+			tabs[2] = new Button("setScene", "GUI/tab_scene", setBtnX+200, setBtnY, true, ctx_selector, 'selector', setContext('main', 'scene'),
+										   updateUI('tabs', 2));
+			
+			sceneButtons[0] = new Button("setBackground", "GUI/btn_background", setBtnX, setBtnY+setBtnSv, true, ctx_selector, 'selector',
+										 setContext('sub', 'background'), updateUI('sceneButtons', 0), true, false);
+			sceneButtons[1] = new Button("setBase", "GUI/btn_base", setBtnX+setBtnSh, setBtnY+setBtnSv, true, ctx_selector, 'selector',
+										 setContext('sub', 'base'), updateUI('sceneButtons', 1), false, false);
+			
+			
+			characterButtons[0] = new Button("setTrainer", "GUI/btn_blue_trainer", setBtnX, setBtnY+setBtnSv, true, ctx_selector, 'selector',
+									setContext('sub', 'trainer'), updateUI('characterButtons', 0), true);
+			characterButtons[1] = new Button("setPokemon1", "GUI/btn_blue_pokemon1", setBtnX+setBtnSh, setBtnY+setBtnSv, true, ctx_selector, 'selector',
+									setContext('sub', 'pokemon', 0), updateUI('characterButtons', 1));
+			characterButtons[2] = new Button("setPokemon2", "GUI/btn_blue_pokemon2", setBtnX+setBtnSh*2, setBtnY+setBtnSv, true, ctx_selector, 'selector',
+									setContext('sub', 'pokemon', 1), updateUI('characterButtons', 2));
+			characterButtons[3] = new Button("setPokemon3", "GUI/btn_blue_pokemon3", setBtnX+setBtnSh*3, setBtnY+setBtnSv, true, ctx_selector, 'selector',
+									setContext('sub', 'pokemon', 2), updateUI('characterButtons', 3));
+			
+			genderButtons[0] = new Button("setEditorMale", "GUI/btn_male", genderBtnX, characteristicsBtnY, true, ctx_editor, 'editor',
+										  updateCharacteristics, updateUI('gender', 0), true, false);
+			genderButtons[1] = new Button("setEditorFemale", "GUI/btn_female", genderBtnX+40, characteristicsBtnY, true, ctx_editor, 'editor',
+										  updateCharacteristics, updateUI('gender', 1), false, false);
+			
+			shinyButton = new Button("setEditorShiny", "GUI/btn_shiny", shinyBtnX, characteristicsBtnY, true, ctx_editor, 'editor',
+										  updateCharacteristics, updateUI('shiny', 0), false, false);
+			
+			zoomButtons[0] = new Button("setZoom1", "GUI/btn_zoom_1x", zoomBtnX, zoomBtnY, true, ctx_displayPanel, 'zoom', setContext('zoom', 0),
+										updateUI('zoom', 0), true);
+			zoomButtons[1] = new Button("setZoom2", "GUI/btn_zoom_1_5x", zoomBtnX+zoomBtnSh, zoomBtnY, true, ctx_displayPanel, 'zoom',
+										setContext('zoom', 1), updateUI('zoom', 1), false);
+			zoomButtons[2] = new Button("setZoom3", "GUI/btn_zoom_2x", zoomBtnX+zoomBtnSh*2, zoomBtnY, true, ctx_displayPanel, 'zoom',
+										setContext('zoom', 2), updateUI('zoom', 2), false);
+			
+			sidebarButtons[0] = new Button("sidebarHelp", "GUI/btn_help", sidebarBtnX, sidebarBtnY, false, ctx_sidebar, 'sidebar', openPopup('help'));
+			sidebarButtons[1] = new Button("sidebarCredits", "GUI/btn_credits", sidebarBtnX, sidebarBtnY+sidebarBtnSv, false, ctx_sidebar, 'sidebar',
+										   openPopup('credits'));
+			
+			
+			var numTrainers = [[], []]; //[[self], [opp]]	-->		[numHeroes, numFriends, numRivals, ...]
+			var trainerGens = [[], []]; //[[self], [opp]]	-->		[[gensTrainerOne], [gensTrainerTwo]]		-->		['rgb', 'gsc', 'dp', ...]
+			var numTrainerFrames = [[], []]; //[[self], [opp]]	-->	[[numFramesGen1Trainer1, numFramesGen2Trainer1], [numFramesGen1Trainer2, ...]]
+			var totalTrainers = [];
+			var maxTrainerPage = []; //for selector browsing
+			
+			getBackgroundInfo();
+			getBaseInfo();
+			getTrainerInfo();
+			createTextSheets();
+			
+			function getBaseInfo(){
+				var req = new XMLHttpRequest();
+			    req.open('GET', "backgroundInfo.php?path=environment/bases", false);
+			    req.onreadystatechange = function(){
+			    	var response = eval("("+req.responseText+")");
+		    		var i = 0;
+		    		while(response[i] != undefined){
+	    				baseInfo[i] = response[i];
+	    				i++;
+		    		}
+			    	numBases = baseInfo.length;
+			    	setBase(0)();
+			    }
+			    req.send();
+			}
+			
+			function getBackgroundInfo(){
+				var req = new XMLHttpRequest();
+			    req.open('GET', "backgroundInfo.php?path=environment/backgrounds", false);
+			    req.onreadystatechange = function(){
+			    	backgrounds = eval(req.responseText);
+			    	numBackgrounds = backgrounds.length;
+			    	setBackground(0)();
+			    }
+			    req.send();
+			}
+			
+			function getTrainerInfo(){
+				var args = "?path=characters/trainers/&dirs[]=back&dirs[]=front";//folders[]=Heroes&folders[]=Leaders
+				for(var i=0; i<trainerPaths.length; i++){
+					args += "&folders[]="+trainerPaths[i];
+				}
+				
+				var req = new XMLHttpRequest();
+			    req.open('GET', "trainerSpriteInfo.php"+args, false);
+			    req.onreadystatechange = function(){
+//			    	alert(req.responseText);
+			    	var res = eval(req.responseText);
+//			    	alert(res[0].length);
+			    	
+			    	for(var i=0; i<2; i++){ //front+back
+			    		var l = 0; //global trainer number used within k-loop.
+			    		for(var j=0; j<res[0].length; j++){ //Heroes, Friends, ...     res[i][j] = [numTrainers, trainerGens, numFrames]
+			    			numTrainers[i].push(parseInt(res[i][j][0][0]));
+			    			for(var k=0; k<res[i][j][0]; k++, l++){ //for every trainer (gen + numFrames)
+			    				var temp = res[i][j][1][k].slice(0); //clone of gens
+			    				numTrainerFrames[i][l] = [];
+			    				trainerGens[i][l] = res[i][j][1][k];
+			    				trainerGens[i][l].sort(function(a,b){ //sort by gen
+									return trainerGenPaths.indexOf(a) - trainerGenPaths.indexOf(b);
+								});
+								for(var m=0; m<trainerGens[i][l].length; m++){ //manually set these to match newly sorted order
+									numTrainerFrames[i][l][m] = res[i][[j]][2][k][temp.indexOf(trainerGens[i][l][m])];
+								}
+			    			}
+			    		}
+			    		totalTrainers[i] = numTrainers[i].reduce(function(a,b){return a+b});
+			    		maxTrainerPage[i] = Math.floor(totalTrainers[i] / (iconRows[0]*iconColumns[0]));
+			    	}
+			    	
+			    	tabs[0].activate();
+					characterButtons[0].activate();
+					zoomButtons[0].activate();
+					genderButtons[0].activate();
+					
+					updateSelector();
+//					document.body.style.backgroundImage = "url('GUI/diag_lines_red.png')"; 
+			    }
+			    req.send();
+			}
+			
+			function createTextSheets(){
+				var sheets = [["GUI/text_capitals.png", "GUI/text_lowercase.png", "GUI/text_numbers.png", "GUI/text_symbols.png"],
+							  ["GUI/text_capitals_big.png", "GUI/text_lowercase_big.png"],
+							  ["GUI/text_numbers_big_white.png", "GUI/text_symbols_big_white.png"]];
+				
+				var sheetsLoaded = 0;
+				var sheetsTotal = sheets.reduce(function(a, b){return a.concat(b)}).length;
+				
+				for(var i=0; i<sheets.length; i++){
+					for(var j=0; j<sheets[i].length; j++){
+						var img = new Image();
+						img.src = sheets[i][j];
+//						alert(img.src);
+						img.onload = function(img, i, j){
+							return function(){
+								textCanvases[i][j] = document.createElement('canvas');
+								textCanvases[i][j].width = img.width;
+								textCanvases[i][j].height = img.height;
+								textContexts[i][j] = textCanvases[i][j].getContext('2d');
+								textContexts[i][j].drawImage(img, 0, 0);
+								
+								sheetsLoaded++;
+								if(sheetsLoaded == sheetsTotal){
+									textReady = true;
+									setTimeout(updateTextArea, 0); //Yikes! Very ugly, but unfortunately needed.
+									setTimeout(updateSelector, 0);
+								}
+							}
+						}(img, i, j);
+					}
+				}
+			}
+			
+			c.onclick = function(e) {
+				for(var key in bounds){
+					if((key.startsWith(context.sub) || key.startsWith("set") || key.startsWith("editor") || key.startsWith("sidebar")) &&
+						bounds[key] && bounds[key].ac && bounds[key].inBounds(e.clientX - c.getBoundingClientRect().left,
+																			  e.clientY - c.getBoundingClientRect().top)){
+						if(context.popupOpen){
+							if(key.startsWith("popup")){
+								bounds[key].execute();
+							}
+							else{
+								continue;
+							}
+						}
+						
+					   	var exec = bounds[key].execute; //crazy caching due to update()s that can clear bounds
+						bounds[key].update();
+						exec();
+						break;
+					}
+				}
+			}
+			
+			c.onmousemove = function(e) {
+				var x = e.clientX - c.getBoundingClientRect().left;
+				var y = e.clientY - c.getBoundingClientRect().top;
+				
+				if(draggingSunDial){
+					x += sunDialOffset[0];
+					y += sunDialOffset[1];
+//					alert(sunDialOffset[0]);
+					context.time = (x-(c_editor.x+sundialBoundsX[0]))/((c_editor.x+sundialBoundsX[1])-(c_editor.x+sundialBoundsX[0])); //progress along parabola on scale [0-1]
+//					alert(progress);
+					
+					updateEditor(0, 2);
+					updateImage();
+				}
+				else{
+					var foundSprite = [];
+					
+					for(var key in bounds){
+						if(x > c_editor.x && x < c_editor.x + c_editor.width && y > c_editor.y + 50 && y < c_editor.y + c_editor.height - 40 &&
+						   bounds[key].inBounds(x, y) && context.sub == 'pokemon'){
+						   	foundSprite = key.split('editor');
+						   	break;
+						}
+					}
+					
+					if(foundSprite.length > 0){
+	//					alert(foundSprite[1]);
+						document.getElementById('GenInfoDiv').style.visibility = 'visible';
+						document.getElementById('GenInfoDiv').style.left = (x+20)+"px";
+						document.getElementById('GenInfoDiv').style.top = (y+20)+"px";
+	//					alert(document.getElementById('GenInfoDiv').style.background-color);
+	//					document.getElementById('GenInfoDiv').style.backgroundImage = "url("+genBoxes[foundSprite[1]].src+")";
+	//					document.getElementById('GenInfoDiv').innerHTML = genPaths[foundSprite[1]];
+						document.getElementById('GenInfoDiv').innerHTML = "<img src="+genBoxes[foundSprite[1]]+">";
+					}
+					else{
+						document.getElementById('GenInfoDiv').style.visibility = 'hidden';
+					}
+				}
+			}
+			
+			c.onmousedown = function(e){
+				var x = e.clientX - c.getBoundingClientRect().left;
+				var y = e.clientY - c.getBoundingClientRect().top;
+				
+				if(context.main == 'scene'){					
+					var sunX = Math.max(c_editor.x + sundialBoundsX[0], Math.min((c_editor.x + sundialBoundsX[0]) + context.time*(sundialBoundsX[1]-sundialBoundsX[0]), c_editor.x + sundialBoundsX[1]));
+					var sunY = c_editor.y + getSundialY(context.time);
+					
+					var dx = sunX - x + 24; //24 = i_sundial.width/2
+					var dy = sunY - y + 24;
+					
+					if(Math.sqrt(Math.pow(dx, 2)+Math.pow(dy, 2)) <= 24){
+						draggingSunDial = true;
+						sunDialOffset = [sunX - x, sunY - y];
+					}
+				}
+			}
+			
+			c.onmouseup = function(){
+				draggingSunDial = false;
+			}
+      
+		</script> 
+	</body>
+</html>
