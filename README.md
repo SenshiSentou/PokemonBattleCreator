@@ -1,4 +1,4 @@
-PokemonBattleScreener
+PokemonBattleCreator
 =====================
 
 All files in this project are hereby released under Creative Commons Zero (CC0) license where applicable.
